@@ -1,0 +1,37 @@
+# 超过GitHub 100MB限制的大文件
+# 词向量预训练模型文件
+2.资料/1.词向量/sgns.weibo.word.bz2
+text_rep/data/sgns.weibo.word
+
+# BERT预训练模型文件
+2.资料/3.预训练模型/bert-base-chinese/model.safetensors
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IDE相关
+.vscode/
+.idea/
+
+# 环境变量
+.env
+.venv
+env/
+venv/
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

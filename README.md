@@ -4,7 +4,7 @@
 
 ## 📚 项目简介
 
-本项目旨在帮助初学者系统学习NLP（自然语言处理）技术，从基础概念出发，逐步深入到文本表示、分词、词向量等核心内容。所有内容均配有详细的理论讲解和实践代码。
+本项目旨在帮助初学者系统学习NLP（自然语言处理）技术，从基础概念出发，逐步深入到文本表示、序列模型、深度学习等核心内容。所有内容均配有详细的理论讲解和实践代码。
 
 ## 📁 项目结构
 
@@ -12,6 +12,7 @@
 NLP/
 ├── 01_NLP导论.md              # 第1章：NLP基础概念与任务
 ├── 02_文本表示.md              # 第2章：文本表示方法详解
+├── 03_传统序列模型.md           # 第3章：RNN、LSTM、GRU详解
 ├── text_rep/                   # 实践代码
 │   ├── 01_tokenize_jieba.ipynb    # 中文分词实践
 │   ├── 02_word_representation.ipynb # 词向量与Word2Vec实践
@@ -19,6 +20,18 @@ NLP/
 │       ├── online_shopping_10_cats.csv  # 在线购物评论数据集
 │       ├── user_dict.txt                # 自定义词典
 │       └── word2vec.txt                 # 训练好的词向量
+├── input_method_rnn/           # 智能输入法RNN项目
+│   ├── src/                       # 源代码
+│   │   ├── config.py                 # 配置文件
+│   │   ├── process.py                # 数据预处理
+│   │   ├── dataset.py                # 数据集类
+│   │   ├── model.py                  # RNN模型定义
+│   │   ├── train.py                  # 训练脚本
+│   │   ├── evaluate.py               # 评估脚本
+│   │   └── predict.py                # 预测脚本
+│   ├── data/                      # 数据目录
+│   ├── models/                    # 模型保存目录
+│   └── logs/                      # 训练日志
 ├── 2.资料/                     # 学习资料
 │   ├── 2.数据集/               # 各类数据集
 │   │   ├── 1.评论数据集/
@@ -48,6 +61,22 @@ NLP/
   - 离散表示：One-Hot编码、词袋模型(BoW)、N-gram
   - 分布式表示：Word2Vec(CBOW/Skip-gram)、GloVe、FastText
   - 上下文词向量：ELMo、BERT、GPT
+
+### 第3章：传统序列模型
+- **RNN（循环神经网络）**：
+  - RNN基础结构与原理
+  - 多层RNN与双向RNN
+  - 输入输出模式详解
+  - API使用与实战案例（智能输入法）
+  - RNN的局限性（梯度消失、长期依赖）
+- **LSTM（长短期记忆网络）**：
+  - LSTM的核心结构（遗忘门、输入门、输出门）
+  - 细胞状态与门控机制
+  - 双向LSTM与多层LSTM
+- **GRU（门控循环单元）**：
+  - GRU的简化结构
+  - 更新门与重置门
+  - LSTM vs GRU对比
 
 ## 🚀 快速开始
 
@@ -89,25 +118,33 @@ similarity = model.similarity("公交", "地铁")
 result = model.most_similar(positive=['男人','女孩'], negative=['男孩'])
 ```
 
-#### 3. 训练Word2Vec模型
-```python
-from gensim.models import Word2Vec
+#### 3. 智能输入法RNN项目
+```bash
+# 进入项目目录
+cd input_method_rnn
 
-# 准备分词后的句子列表
-sentences = [["我", "爱", "自然语言"], ["深度", "学习", "很", "有趣"]]
+# 1. 数据预处理
+python src/process.py
 
-# 训练模型
-model = Word2Vec(
-    sentences,
-    vector_size=100,    # 词向量维度
-    window=5,           # 上下文窗口
-    min_count=2,        # 最小词频
-    sg=1,               # 1=Skip-gram, 0=CBOW
-    workers=4
-)
+# 2. 训练模型
+python src/train.py
 
-# 保存模型
-model.wv.save_word2vec_format("./data/word2vec.txt")
+# 3. 评估模型
+python src/evaluate.py
+
+# 4. 交互式预测
+python src/predict.py
+```
+
+预测效果示例：
+```
+请输入前缀（输入'quit'退出）：我今天
+预测结果：
+  1. 去 (概率: 0.3124)
+  2. 要 (概率: 0.2856)
+  3. 想 (概率: 0.1987)
+  4. 感觉 (概率: 0.1023)
+  5. 已经 (概率: 0.0562)
 ```
 
 ## 📖 学习路径建议
@@ -121,18 +158,27 @@ model.wv.save_word2vec_format("./data/word2vec.txt")
 第2阶段：文本表示基础
 ├─ 阅读 02_文本表示.md
 ├─ 学习分词原理和方法
-└─ 理解Token、词表、嵌入层等核心概念
+├─ 理解Token、词表、嵌入层等核心概念
+└─ 掌握Word2Vec词向量训练和PyTorch Embedding使用
 
-第3阶段：动手实践
-├─ 运行 01_tokenize_jieba.ipynb
-│   └─ 掌握jieba的三种分词模式
-├─ 运行 02_word_representation.ipynb
-│   └─ 学习词向量的使用和训练
+第3阶段：序列模型
+├─ 阅读 03_传统序列模型.md
+├─ 理解RNN的循环结构和局限性
+├─ 学习LSTM的门控机制
+├─ 了解GRU的简化设计
+└─ 掌握多层RNN和双向RNN的使用
+
+第4阶段：动手实践
+├─ 运行 text_rep/*.ipynb
+│   └─ 掌握jieba分词和词向量训练
+├─ 完成 input_method_rnn 项目
+│   └─ 实现基于RNN的智能输入法
 └─ 尝试修改参数，观察效果变化
 
-第4阶段：深入探索
-├─ 学习Word2Vec原理（CBOW vs Skip-gram）
-├─ 了解预训练语言模型（BERT、GPT）
+第5阶段：深入探索
+├─ 学习Attention机制
+├─ 了解Transformer架构
+├─ 探索预训练语言模型（BERT、GPT）
 └─ 尝试应用到实际任务中
 ```
 
@@ -148,6 +194,11 @@ model.wv.save_word2vec_format("./data/word2vec.txt")
 | **OOV** | Out-of-Vocabulary，未登录词 |
 | **CBOW** | 用上下文预测中心词 |
 | **Skip-gram** | 用中心词预测上下文 |
+| **RNN** | 循环神经网络，处理序列数据 |
+| **LSTM** | 长短期记忆网络，解决RNN长期依赖问题 |
+| **GRU** | 门控循环单元，LSTM的简化版本 |
+| **双向RNN** | 同时考虑过去和未来上下文的RNN |
+| **多层RNN** | 堆叠多个RNN层，学习层次化特征 |
 
 ## 📊 数据集说明
 
@@ -156,7 +207,7 @@ model.wv.save_word2vec_format("./data/word2vec.txt")
 | `online_shopping_10_cats.csv` | 10类商品在线评论数据 | 训练词向量、情感分析 |
 | `user_dict.txt` | 自定义词典 | 提升分词准确率 |
 | `cmn.txt` | 中英短句对照 | 机器翻译练习 |
-| `synthesized_.jsonl` | 对话数据 | 对话系统练习 |
+| `synthesized_.jsonl` | 对话数据 | 对话系统、智能输入法训练 |
 
 ## 📚 推荐资源
 
@@ -165,16 +216,21 @@ model.wv.save_word2vec_format("./data/word2vec.txt")
 - **sgns.weibo.word**: 微博词向量（SGNS算法，300维）
 
 ### 学习资料
-- 理论文档：`01_NLP导论.md`、`02_文本表示.md`
-- 实践代码：`text_rep/*.ipynb`
+- 理论文档：`01_NLP导论.md`、`02_文本表示.md`、`03_传统序列模型.md`
+- 实践代码：`text_rep/*.ipynb`、`input_method_rnn/src/*.py`
 
-## ⚠️ 注意事项
+## 📝 更新日志
 
-1. **分词一致性**：同一项目内保持使用相同的分词工具和参数
-2. **词向量维度**：常见选择50/100/200/300维，维度越高表达能力越强但计算成本越高
-3. **自定义词典**：专业领域文本建议添加领域词典以提升分词准确率
-4. **数据预处理**：训练词向量前需进行分词和去停用词等预处理
+- **2024-02**: 项目初始化，添加NLP导论和文本表示理论文档
+- **2024-02**: 添加Jieba分词和Word2Vec实践代码
+- **2024-02**: 添加传统序列模型文档（RNN、LSTM、GRU）
+- **2024-02**: 添加智能输入法RNN项目完整代码
 
+---
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request，一起完善这个NLP学习项目！
 
 ---
 

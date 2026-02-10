@@ -1,143 +1,161 @@
 """
 模型预测模块
-本模块负责加载训练好的模型，根据用户输入的前缀预测下一个词
-"""
-import torch
-import jieba
 
+功能描述:
+    本模块实现了输入法RNN模型的预测功能，主要功能包括：
+    1. 批量预测(predict_batch): 对多个输入序列同时进行预测，返回Top-5候选词索引
+    2. 单条预测(predict): 对单条文本输入进行预测，返回Top-5候选词
+    3. 交互式预测(run_predict): 提供命令行交互界面，实时获取用户输入并给出预测
+
+预测流程:
+    1. 文本编码：使用分词器将文本转换为词索引序列
+    2. 模型推理：将索引序列输入模型，获取词汇表上的概率分布
+    3. Top-K选择：选取概率最高的K个词作为候选结果
+    4. 结果解码：将候选词索引转换回文本形式
+
+作者: Red_Moon
+创建日期: 2026-02
+"""
+
+import jieba
+import torch
 import config
 from model import InputMethodModel
+from tokenizer import JiebaTokenizer
 
 
-def load_vocab():
+def predict_batch(model, inputs):
     """
-    加载词表
-    
-    从文件加载词表，并构建词到索引、索引到词的映射
-    
-    Returns:
-        tuple: (word2index, index2word)
-            - word2index (dict): 词到索引的映射
-            - index2word (dict): 索引到词的映射
-    """
-    # 读取词表文件，每行一个词
-    with open(config.MODELS_DIR / 'vocab.txt', 'r', encoding="utf-8") as f:
-        vocab_list = [line.strip() for line in f]
-    
-    # 构建双向映射字典
-    word2index = {word: index for index, word in enumerate(vocab_list)}
-    index2word = {index: word for index, word in enumerate(vocab_list)}
-    
-    return word2index, index2word
+    批量预测函数
 
+    功能描述:
+        对一批输入序列进行预测，返回每个输入的前5个最可能的候选词索引。
+        使用torch.topk高效获取Top-K结果，适用于批量评估和推理。
 
-def load_model(word2index):
+    参数:
+        model (InputMethodModel): 已加载权重的输入法模型
+        inputs (torch.Tensor): 输入词索引序列
+            形状: [batch_size, seq_len]
+            类型: torch.long
+            设备: 应与模型在同一设备(CPU/GPU)
+
+    返回:
+        list: Top-5候选词索引列表
+            形状: [batch_size, 5]
+            说明: 每个元素是一个包含5个整数索引的列表
+
+    注意事项:
+        - 函数内部会调用model.eval()设置评估模式
+        - 使用torch.no_grad()上下文管理器禁用梯度计算，节省内存
+        - 输入张量应已移至正确的设备(CPU/GPU)
     """
-    加载模型
-    
-    加载训练好的模型权重，并设置为评估模式
-    
-    Args:
-        word2index (dict): 词表映射，用于获取词表大小
-    
-    Returns:
-        InputMethodModel: 加载好权重的模型实例
-    """
-    # 设备选择
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # 创建模型实例
-    vocab_size = len(word2index)
-    model = InputMethodModel(vocab_size).to(device)
-    
-    # 加载预训练权重
-    model.load_state_dict(torch.load(config.MODELS_DIR / 'best.pth', map_location=device))
-    
-    # 设置为评估模式（禁用dropout等）
     model.eval()
-    
-    return model
 
-
-def predict_next_word(prefix, model, word2index, index2word, top_k=5):
-    """
-    预测下一个词
-    
-    根据输入的前缀，预测概率最高的top_k个候选词
-    
-    Args:
-        prefix (str): 输入前缀文本，如"我今天"
-        model (InputMethodModel): 加载好的模型
-        word2index (dict): 词到索引的映射
-        index2word (dict): 索引到词的映射
-        top_k (int): 返回候选词的数量，默认5
-    
-    Returns:
-        list: 候选词列表，每个元素是(word, probability)元组
-    """
-    device = next(model.parameters()).device
-    
-    # Step 1: 分词 - 将输入文本切分为词序列
-    tokens = jieba.lcut(prefix)
-    
-    # Step 2: 取最后SEQ_LEN个词作为输入
-    # 如果输入长度超过SEQ_LEN，只保留最后SEQ_LEN个词
-    # 如果输入长度不足SEQ_LEN，前面补<unk>（索引为0）
-    if len(tokens) >= config.SEQ_LEN:
-        tokens = tokens[-config.SEQ_LEN:]
-    else:
-        # 前面补0（<unk>的索引）
-        tokens = ['<unk>'] * (config.SEQ_LEN - len(tokens)) + tokens
-    
-    # Step 3: 将词转换为索引
-    input_ids = [word2index.get(token, 0) for token in tokens]
-    
-    # Step 4: 转换为张量并添加batch维度
-    input_tensor = torch.tensor([input_ids], dtype=torch.long).to(device)
-    
-    # Step 5: 模型预测
     with torch.no_grad():
-        output = model(input_tensor)  # 输出形状: [1, vocab_size]
-        
-        # 使用softmax获取概率分布
-        probabilities = torch.softmax(output, dim=1)
-        
-        # 获取概率最高的top_k个词
-        top_k_probs, top_k_indices = torch.topk(probabilities, top_k, dim=1)
-        
-        # 转换为Python列表
-        top_k_probs = top_k_probs.squeeze().cpu().numpy()
-        top_k_indices = top_k_indices.squeeze().cpu().numpy()
-    
-    # Step 6: 将索引转换回词
-    results = []
-    for idx, prob in zip(top_k_indices, top_k_probs):
-        word = index2word.get(int(idx), '<unk>')
-        results.append((word, float(prob)))
-    
-    return results
+        output = model(inputs)
+
+    top5_indexes = torch.topk(output, k=5).indices
+    top5_indexes_list = top5_indexes.tolist()
+    return top5_indexes_list
+
+
+def predict(text, model, tokenizer, device):
+    """
+    单条文本预测函数
+
+    功能描述:
+        对单条文本输入进行预测，返回Top-5候选词。
+        完整的预测流程包括：文本编码 -> 张量转换 -> 模型推理 -> 结果解码
+
+    参数:
+        text (str): 输入文本字符串，将被分词并编码
+        model (InputMethodModel): 已加载权重的输入法模型
+        tokenizer (JiebaTokenizer): 分词器，用于文本编码和解码
+        device (torch.device): 计算设备（CPU或CUDA）
+
+    返回:
+        list: Top-5候选词列表
+            形状: [5]
+            元素类型: str
+            说明: 按概率从高到低排序的候选词列表
+
+    处理流程:
+        1. 使用tokenizer将文本编码为词索引列表
+        2. 将索引列表转换为张量并添加batch维度
+        3. 将张量移至指定设备
+        4. 调用predict_batch进行批量预测
+        5. 将预测索引解码为词并返回
+    """
+    indexes = tokenizer.encode(text)
+    input_tensor = torch.tensor([indexes], dtype=torch.long)
+    input_tensor = input_tensor.to(device)
+
+    top5_indexes_list = predict_batch(model, input_tensor)
+    top5_tokens = [tokenizer.index2word[index] for index in top5_indexes_list[0]]
+
+    return top5_tokens
+
+
+def run_predict():
+    """
+    运行交互式预测程序
+
+    功能描述:
+        提供命令行交互界面，循环接收用户输入并实时显示预测结果。
+        支持累积输入历史，模拟真实输入法的连续输入场景。
+
+    交互命令:
+        - 输入 'q' 或 'quit': 退出程序
+        - 输入空字符串: 提示重新输入
+        - 其他输入: 累积到输入历史并进行预测
+
+    资源准备流程:
+        1. 确定计算设备（优先使用GPU）
+        2. 从文件加载词表
+        3. 初始化模型并加载预训练权重
+
+    异常处理:
+        - 如果模型文件或词表文件不存在，会抛出FileNotFoundError
+        - 如果输入包含词表外的词，会使用<unk>标记处理
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"使用设备: {device}")
+
+    tokenizer = JiebaTokenizer.from_vocab(config.MODELS_DIR / 'vocab.txt')
+    print("词表加载成功")
+
+    model = InputMethodModel(vocab_size=tokenizer.vocab_size).to(device)
+    model.load_state_dict(torch.load(config.MODELS_DIR / 'best.pth'))
+    print("模型加载成功")
+
+    print("\n" + "=" * 40)
+    print("欢迎使用输入法模型(输入q或者quit退出)")
+    print("=" * 40)
+
+    input_history = ''
+
+    while True:
+        user_input = input("> ")
+
+        if user_input in ['q', 'quit']:
+            print("欢迎下次再来")
+            break
+
+        if user_input.strip() == '':
+            print("请输入内容")
+            continue
+
+        input_history += user_input
+        print(f'输入历史: {input_history}')
+
+        try:
+            top5_tokens = predict(input_history, model, tokenizer, device)
+            print(f'预测结果: {top5_tokens}')
+        except Exception as e:
+            print(f'预测出错: {e}')
+
+        print("-" * 40)
 
 
 if __name__ == '__main__':
-    # ==================== 加载词表和模型 ====================
-    print("正在加载词表和模型...")
-    word2index, index2word = load_vocab()
-    model = load_model(word2index)
-    print("加载完成，可以开始预测")
-    
-    # ==================== 交互式预测 ====================
-    while True:
-        # 获取用户输入
-        prefix = input("\n请输入前缀（输入'quit'退出）：")
-        
-        # 退出条件
-        if prefix.lower() == 'quit':
-            break
-        
-        # 预测下一个词
-        predictions = predict_next_word(prefix, model, word2index, index2word, top_k=5)
-        
-        # 显示预测结果
-        print(f"预测结果：")
-        for i, (word, prob) in enumerate(predictions, 1):
-            print(f"  {i}. {word} (概率: {prob:.4f})")
+    run_predict()

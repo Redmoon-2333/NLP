@@ -1,87 +1,97 @@
 """
-模型定义模块
-本模块定义了基于RNN的智能输入法模型架构
+神经网络模型模块
+
+功能描述:
+    本模块定义了基于RNN的输入法预测神经网络模型。
+    模型架构采用经典的Embedding + RNN + Linear三层结构：
+    1. 嵌入层(Embedding): 将词索引转换为密集向量表示
+    2. RNN层: 处理序列信息，捕捉上下文依赖
+    3. 全连接层(Linear): 将RNN输出映射到词汇表空间，生成预测概率
+
+模型特点:
+    - 使用PyTorch nn.Module实现，支持GPU加速
+    - 采用batch_first=True，便于数据处理
+    - 使用最后一个时间步的隐藏状态进行预测
+
+作者: Red_Moon
+创建日期: 2026-02
 """
+
 from torch import nn
 import config
 
 
 class InputMethodModel(nn.Module):
     """
-    智能输入法RNN模型
-    
-    模型结构：Embedding层 -> RNN层 -> Linear层
-    输入：前SEQ_LEN个词的索引序列
-    输出：下一个词的预测概率分布（vocab_size维）
+    输入法预测神经网络模型
+
+    功能描述:
+        基于RNN的序列预测模型，用于根据输入的前N个词预测下一个词。
+        模型接收固定长度的词索引序列，输出词汇表上每个词的概率分布。
+
+    架构说明:
+        1. Embedding层: 将离散词索引映射为连续向量
+        2. RNN层: 处理序列，提取时序特征
+        3. Linear层: 将RNN输出映射到词汇表维度
+
+    属性:
+        embedding (nn.Embedding): 词嵌入层
+        rnn (nn.RNN): 循环神经网络层
+        linear (nn.Linear): 全连接输出层
     """
-    
+
     def __init__(self, vocab_size):
         """
-        初始化模型
-        
-        Args:
-            vocab_size (int): 词表大小，即模型需要预测的类别数
+        初始化输入法模型
+
+        参数:
+            vocab_size (int): 词汇表大小，决定嵌入层和输出层的维度
         """
         super().__init__()
-        
-        # ==================== Embedding层 ====================
-        # 将词索引映射为稠密向量表示
-        # 输入形状: [batch_size, seq_len]（词索引）
-        # 输出形状: [batch_size, seq_len, embedding_dim]
+
         self.embedding = nn.Embedding(
-            num_embeddings=vocab_size,      # 词表大小
-            embedding_dim=config.EMBEDDING_DIM  # 嵌入维度
+            num_embeddings=vocab_size,
+            embedding_dim=config.EMBEDDING_DIM
         )
 
-        # ==================== RNN层 ====================
-        # 循环神经网络，用于建模序列信息
-        # 输入形状: [batch_size, seq_len, embedding_dim]
-        # 输出形状: [batch_size, seq_len, hidden_size]
         self.rnn = nn.RNN(
-            input_size=config.EMBEDDING_DIM,   # 输入维度（embedding_dim）
-            hidden_size=config.HIDDEN_SIZE,    # 隐藏层维度
-            batch_first=True                   # 批次维度为第一维
+            input_size=config.EMBEDDING_DIM,
+            hidden_size=config.HIDDEN_SIZE,
+            batch_first=True
         )
 
-        # ==================== 全连接层 ====================
-        # 将RNN的输出映射到词表空间，得到每个词的预测分数
-        # 输入形状: [batch_size, hidden_size]
-        # 输出形状: [batch_size, vocab_size]
         self.linear = nn.Linear(
-            in_features=config.HIDDEN_SIZE,    # 输入维度（RNN隐藏层输出）
-            out_features=vocab_size            # 输出维度（词表大小）
+            in_features=config.HIDDEN_SIZE,
+            out_features=vocab_size
         )
 
     def forward(self, x):
         """
         前向传播
-        
-        Args:
-            x (torch.Tensor): 输入词索引序列，形状为 [batch_size, seq_len]
-        
-        Returns:
-            torch.Tensor: 预测结果，形状为 [batch_size, vocab_size]
-                         表示每个样本对词表中每个词的预测分数
+
+        功能描述:
+            执行模型的前向传播计算，将输入的词索引序列转换为词汇表上的概率分数。
+            使用RNN最后一个时间步的隐藏状态进行预测。
+
+        参数:
+            x (torch.Tensor): 输入词索引序列
+                形状: [batch_size, seq_len]
+                类型: torch.long
+                取值范围: [0, vocab_size-1]
+
+        返回:
+            torch.Tensor: 词汇表上的预测分数（logits）
+                形状: [batch_size, vocab_size]
+                说明: 未经过softmax，可直接用于CrossEntropyLoss
+
+        计算流程:
+            1. 嵌入层: [batch_size, seq_len] -> [batch_size, seq_len, embedding_dim]
+            2. RNN层: [batch_size, seq_len, embedding_dim] -> [batch_size, seq_len, hidden_size]
+            3. 取最后一个时间步: [batch_size, seq_len, hidden_size] -> [batch_size, hidden_size]
+            4. 全连接层: [batch_size, hidden_size] -> [batch_size, vocab_size]
         """
-        # x.shape: [batch_size, seq_len]
-        
-        # Step 1: 词嵌入 - 将词索引转换为向量表示
         embed = self.embedding(x)
-        # embed.shape: [batch_size, seq_len, embedding_dim]
-        
-        # Step 2: RNN处理 - 建模序列信息
-        # output: 每个时间步的隐藏状态
-        # _: 最后一个时间步的隐藏状态（此处不使用）
         output, _ = self.rnn(embed)
-        # output.shape: [batch_size, seq_len, hidden_size]
-        
-        # Step 3: 取最后一个时间步的输出作为句子表示
-        # 使用-1索引获取序列最后一个位置的隐藏状态
         last_hidden_state = output[:, -1, :]
-        # last_hidden_state.shape: [batch_size, hidden_size]
-        
-        # Step 4: 全连接层 - 映射到词表空间
         output = self.linear(last_hidden_state)
-        # output.shape: [batch_size, vocab_size]
-        
         return output

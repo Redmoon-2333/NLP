@@ -2,9 +2,16 @@
 
 一个系统化的自然语言处理学习仓库，涵盖从基础概念到实践应用的完整知识体系。
 
+**作者**: Red_Moon  
+**开发时间**: 2026年2月
+
+---
+
 ## 📚 项目简介
 
 本项目旨在帮助初学者系统学习NLP（自然语言处理）技术，从基础概念出发，逐步深入到文本表示、序列模型、深度学习等核心内容。所有内容均配有详细的理论讲解和实践代码。
+
+---
 
 ## 📁 项目结构
 
@@ -12,8 +19,11 @@
 NLP/
 ├── 01_NLP导论.md              # 第1章：NLP基础概念与任务
 ├── 02_文本表示.md              # 第2章：文本表示方法详解
-├── 03_传统序列模型.md           # 第3章：RNN、LSTM、GRU详解
-├── text_rep/                   # 实践代码
+├── 03_RNN.md                   # 第3章：RNN循环神经网络详解
+├── 03_LSTM.md                  # 第3章：LSTM长短期记忆网络详解
+├── 03_GRU.md                   # 第3章：GRU门控循环单元详解
+├── 附录_TensorBoard使用指南.md  # TensorBoard可视化工具指南
+├── text_rep/                   # 文本表示实践代码
 │   ├── 01_tokenize_jieba.ipynb    # 中文分词实践
 │   ├── 02_word_representation.ipynb # 词向量与Word2Vec实践
 │   └── data/                      # 数据集
@@ -28,7 +38,21 @@ NLP/
 │   │   ├── model.py                  # RNN模型定义
 │   │   ├── train.py                  # 训练脚本
 │   │   ├── evaluate.py               # 评估脚本
-│   │   └── predict.py                # 预测脚本
+│   │   ├── predict.py                # 预测脚本
+│   │   └── tokenizer.py              # 分词器实现
+│   ├── data/                      # 数据目录
+│   ├── models/                    # 模型保存目录
+│   └── logs/                      # 训练日志
+├── review_analyze_lstm/        # 评论情感分析LSTM项目
+│   ├── src/                       # 源代码
+│   │   ├── config.py                 # 配置文件
+│   │   ├── process.py                # 数据预处理
+│   │   ├── dataset.py                # 数据集类
+│   │   ├── model.py                  # LSTM模型定义
+│   │   ├── train.py                  # 训练脚本
+│   │   ├── evaluate.py               # 评估脚本
+│   │   ├── predict.py                # 预测脚本
+│   │   └── tokenizer.py              # 分词器实现
 │   ├── data/                      # 数据目录
 │   ├── models/                    # 模型保存目录
 │   └── logs/                      # 训练日志
@@ -41,6 +65,8 @@ NLP/
 │       └── bert-base-chinese/
 └── README.md                   # 项目说明
 ```
+
+---
 
 ## 🎯 学习内容
 
@@ -63,30 +89,38 @@ NLP/
   - 上下文词向量：ELMo、BERT、GPT
 
 ### 第3章：传统序列模型
-- **RNN（循环神经网络）**：
-  - RNN基础结构与原理
-  - 多层RNN与双向RNN
-  - 输入输出模式详解
-  - API使用与实战案例（智能输入法）
-  - RNN的局限性（梯度消失、长期依赖）
-- **LSTM（长短期记忆网络）**：
-  - LSTM的核心结构（遗忘门、输入门、输出门）
-  - 细胞状态与门控机制
-  - 双向LSTM与多层LSTM
-- **GRU（门控循环单元）**：
-  - GRU的简化结构
-  - 更新门与重置门
-  - LSTM vs GRU对比
+
+#### 3.1 RNN（循环神经网络）
+- RNN基础结构与原理
+- 多层RNN与双向RNN
+- 输入输出模式详解
+- API使用与实战案例（智能输入法）
+- RNN的局限性（梯度消失、长期依赖）
+
+#### 3.2 LSTM（长短期记忆网络）
+- LSTM的核心结构（遗忘门、输入门、输出门）
+- 细胞状态与门控机制
+- 双向LSTM与多层LSTM
+- API使用与实战案例（评论情感分析）
+
+#### 3.3 GRU（门控循环单元）
+- GRU的简化结构
+- 更新门与重置门
+- 双向GRU与多层GRU
+- LSTM vs GRU对比
+
+---
 
 ## 🚀 快速开始
 
 ### 环境要求
-- Python 3.7+
+- Python 3.8+
+- PyTorch 2.0+
 - Jupyter Notebook
 
 ### 安装依赖
 ```bash
-pip install jieba pandas gensim transformers torch
+pip install jieba pandas gensim transformers torch tqdm scikit-learn
 ```
 
 ### 运行示例
@@ -147,6 +181,40 @@ python src/predict.py
   5. 已经 (概率: 0.0562)
 ```
 
+#### 4. 评论情感分析LSTM项目
+```bash
+# 进入项目目录
+cd review_analyze_lstm
+
+# 1. 数据预处理
+python src/process.py
+
+# 2. 训练模型
+python src/train.py
+
+# 3. 评估模型
+python src/evaluate.py
+
+# 4. 交互式预测
+python src/predict.py
+```
+
+预测效果示例：
+```
+========================================
+欢迎使用情感分析模型(输入q或者quit退出)
+========================================
+> 这款手机质量太差了，完全不值这个价
+预测结果: 0.12
+负向评论,置信度:0.88
+----------------------------------------
+> 非常满意，物流很快，商品质量很好
+预测结果: 0.91
+正向评论,置信度:0.91
+```
+
+---
+
 ## 📖 学习路径建议
 
 ```
@@ -162,10 +230,14 @@ python src/predict.py
 └─ 掌握Word2Vec词向量训练和PyTorch Embedding使用
 
 第3阶段：序列模型
-├─ 阅读 03_传统序列模型.md
-├─ 理解RNN的循环结构和局限性
-├─ 学习LSTM的门控机制
-├─ 了解GRU的简化设计
+├─ 阅读 03_RNN.md
+│   ├─ 理解RNN的循环结构和局限性
+│   └─ 完成智能输入法项目
+├─ 阅读 03_LSTM.md
+│   ├─ 学习LSTM的门控机制
+│   └─ 完成评论情感分析项目
+├─ 阅读 03_GRU.md
+│   └─ 了解GRU的简化设计
 └─ 掌握多层RNN和双向RNN的使用
 
 第4阶段：动手实践
@@ -173,6 +245,8 @@ python src/predict.py
 │   └─ 掌握jieba分词和词向量训练
 ├─ 完成 input_method_rnn 项目
 │   └─ 实现基于RNN的智能输入法
+├─ 完成 review_analyze_lstm 项目
+│   └─ 实现基于LSTM的情感分析
 └─ 尝试修改参数，观察效果变化
 
 第5阶段：深入探索
@@ -181,6 +255,8 @@ python src/predict.py
 ├─ 探索预训练语言模型（BERT、GPT）
 └─ 尝试应用到实际任务中
 ```
+
+---
 
 ## 🔧 核心概念速查
 
@@ -200,6 +276,8 @@ python src/predict.py
 | **双向RNN** | 同时考虑过去和未来上下文的RNN |
 | **多层RNN** | 堆叠多个RNN层，学习层次化特征 |
 
+---
+
 ## 📊 数据集说明
 
 | 数据集 | 描述 | 用途 |
@@ -209,6 +287,8 @@ python src/predict.py
 | `cmn.txt` | 中英短句对照 | 机器翻译练习 |
 | `synthesized_.jsonl` | 对话数据 | 对话系统、智能输入法训练 |
 
+---
+
 ## 📚 推荐资源
 
 ### 预训练模型
@@ -216,15 +296,19 @@ python src/predict.py
 - **sgns.weibo.word**: 微博词向量（SGNS算法，300维）
 
 ### 学习资料
-- 理论文档：`01_NLP导论.md`、`02_文本表示.md`、`03_传统序列模型.md`
-- 实践代码：`text_rep/*.ipynb`、`input_method_rnn/src/*.py`
+- 理论文档：`01_NLP导论.md`、`02_文本表示.md`、`03_RNN.md`、`03_LSTM.md`、`03_GRU.md`
+- 实践代码：`text_rep/*.ipynb`、`input_method_rnn/src/*.py`、`review_analyze_lstm/src/*.py`
+
+---
 
 ## 📝 更新日志
 
-- **2024-02**: 项目初始化，添加NLP导论和文本表示理论文档
-- **2024-02**: 添加Jieba分词和Word2Vec实践代码
-- **2024-02**: 添加传统序列模型文档（RNN、LSTM、GRU）
-- **2024-02**: 添加智能输入法RNN项目完整代码
+- **2026-02**: 项目初始化，添加NLP导论和文本表示理论文档
+- **2026-02**: 添加Jieba分词和Word2Vec实践代码
+- **2026-02**: 添加RNN、LSTM、GRU理论文档
+- **2026-02**: 添加智能输入法RNN项目完整代码
+- **2026-02**: 添加评论情感分析LSTM项目完整代码
+- **2026-02**: 添加TensorBoard使用指南附录
 
 ---
 

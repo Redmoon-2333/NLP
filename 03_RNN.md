@@ -850,6 +850,15 @@ input_method_rnn/
 
 #### 详细实现
 
+> **【RNN案例代码基准版】**
+> 
+> 本案例作为后续LSTM和GRU案例的对比基准，完整展示了基于RNN的语言模型实现。
+> 核心特点：
+> - 任务类型：**多分类任务**（预测下一个词，输出维度=vocab_size）
+> - 模型结构：Embedding → RNN → Linear
+> - 损失函数：CrossEntropyLoss（多分类交叉熵）
+> - 序列处理：固定长度，直接取最后一个时间步
+
 **1. 数据预处理（process.py）**
 
 本模块负责将原始数据进行清洗、分词、编码与划分，最终生成模型可直接读取的标准格式数据集，并保存到jsonl文件中。
@@ -886,27 +895,33 @@ input_method_rnn/
 ```python
 class InputMethodModel(nn.Module):
     """
-    模型结构：Embedding层 -> RNN层 -> Linear层
+    【RNN模型结构】Embedding层 -> RNN层 -> Linear层
+    
+    关键特征：
+    - 使用nn.RNN作为序列编码器
+    - 输出维度=vocab_size（多分类，预测下一个词）
+    - 直接取最后一个时间步的隐藏状态进行分类
     """
     def __init__(self, vocab_size):
         super().__init__()
         # Embedding层：将词索引映射为稠密向量
         self.embedding = nn.Embedding(vocab_size, config.EMBEDDING_DIM)
         
-        # RNN层：建模序列信息
+        # 【RNN核心层】建模序列信息
         self.rnn = nn.RNN(
             input_size=config.EMBEDDING_DIM,
             hidden_size=config.HIDDEN_SIZE,
             batch_first=True
         )
         
-        # 全连接层：映射到词表空间
+        # 全连接层：映射到词表空间（多分类输出）
         self.linear = nn.Linear(config.HIDDEN_SIZE, vocab_size)
 
     def forward(self, x):
         # x: [batch_size, seq_len]
         embed = self.embedding(x)           # [batch_size, seq_len, embedding_dim]
         output, _ = self.rnn(embed)          # [batch_size, seq_len, hidden_size]
+        # 【关键】直接取最后一个时间步的隐藏状态
         last_hidden = output[:, -1, :]       # [batch_size, hidden_size]
         output = self.linear(last_hidden)    # [batch_size, vocab_size]
         return output
@@ -926,8 +941,8 @@ def train():
     # 3. 模型初始化
     model = InputMethodModel(vocab_size).to(device)
     
-    # 4. 损失函数和优化器
-    criterion = nn.CrossEntropyLoss()
+    # 4. 【多分类】损失函数和优化器
+    criterion = nn.CrossEntropyLoss()  # 适用于多分类任务
     optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
     
     # 5. 训练循环
@@ -983,6 +998,7 @@ def predict_next_word(prefix, model, word2index, index2word, top_k=5):
     # 4. 模型预测
     with torch.no_grad():
         output = model(input_tensor)
+        # 【多分类】使用softmax获取概率分布
         probabilities = torch.softmax(output, dim=1)
         top_k_probs, top_k_indices = torch.topk(probabilities, top_k, dim=1)
     

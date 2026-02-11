@@ -22,47 +22,39 @@ NLP/
 ├── 03_RNN.md                   # 第3章：RNN循环神经网络详解
 ├── 03_LSTM.md                  # 第3章：LSTM长短期记忆网络详解
 ├── 03_GRU.md                   # 第3章：GRU门控循环单元详解
+├── 04_Seq2Seq.md               # 第4章：Seq2Seq序列到序列模型
 ├── 附录_TensorBoard使用指南.md  # TensorBoard可视化工具指南
+├── 附录_BLEU使用指南.md         # BLEU翻译质量评估指南
 ├── text_rep/                   # 文本表示实践代码
 │   ├── 01_tokenize_jieba.ipynb    # 中文分词实践
 │   ├── 02_word_representation.ipynb # 词向量与Word2Vec实践
 │   └── data/                      # 数据集
-│       ├── online_shopping_10_cats.csv  # 在线购物评论数据集
-│       ├── user_dict.txt                # 自定义词典
-│       └── word2vec.txt                 # 训练好的词向量
 ├── input_method_rnn/           # 智能输入法RNN项目
 │   ├── src/                       # 源代码
-│   │   ├── config.py                 # 配置文件
-│   │   ├── process.py                # 数据预处理
-│   │   ├── dataset.py                # 数据集类
-│   │   ├── model.py                  # RNN模型定义
-│   │   ├── train.py                  # 训练脚本
-│   │   ├── evaluate.py               # 评估脚本
-│   │   ├── predict.py                # 预测脚本
-│   │   └── tokenizer.py              # 分词器实现
 │   ├── data/                      # 数据目录
 │   ├── models/                    # 模型保存目录
 │   └── logs/                      # 训练日志
 ├── review_analyze_lstm/        # 评论情感分析LSTM项目
 │   ├── src/                       # 源代码
-│   │   ├── config.py                 # 配置文件
-│   │   ├── process.py                # 数据预处理
-│   │   ├── dataset.py                # 数据集类
-│   │   ├── model.py                  # LSTM模型定义
-│   │   ├── train.py                  # 训练脚本
-│   │   ├── evaluate.py               # 评估脚本
-│   │   ├── predict.py                # 预测脚本
-│   │   └── tokenizer.py              # 分词器实现
 │   ├── data/                      # 数据目录
 │   ├── models/                    # 模型保存目录
 │   └── logs/                      # 训练日志
+├── translation_seq2seq/        # 中英机器翻译Seq2Seq项目
+│   ├── src/                       # 源代码
+│   │   ├── config.py                 # 配置文件
+│   │   ├── process.py                # 数据预处理
+│   │   ├── dataset.py                # Dataset和DataLoader
+│   │   ├── model.py                  # Seq2Seq模型定义
+│   │   ├── train.py                  # 训练流程
+│   │   ├── evaluate.py               # BLEU评估
+│   │   ├── predict.py                # 预测接口
+│   │   └── tokenizer.py              # 中英文分词器
+│   ├── data/                      # 数据目录
+│   ├── models/                    # 模型保存目录
+│   └── logs/                      # TensorBoard训练日志
 ├── 2.资料/                     # 学习资料
 │   ├── 2.数据集/               # 各类数据集
-│   │   ├── 1.评论数据集/
-│   │   ├── 2.对话数据集/
-│   │   └── 3.中英短句数据集/
 │   └── 3.预训练模型/           # 预训练模型
-│       └── bert-base-chinese/
 └── README.md                   # 项目说明
 ```
 
@@ -109,6 +101,18 @@ NLP/
 - 双向GRU与多层GRU
 - LSTM vs GRU对比
 
+### 第4章：Seq2Seq序列到序列模型
+- **Seq2Seq架构**：编码器-解码器结构
+- **编码器**：将输入序列压缩为上下文向量
+- **解码器**：自回归生成输出序列
+- **Teacher Forcing**：训练技巧与Exposure Bias问题
+- **推理策略**：贪心搜索、束搜索(Beam Search)
+- **实战项目**：中英机器翻译系统
+  - 数据预处理与词表构建
+  - GRU编码器-解码器实现
+  - BLEU-4质量评估
+  - 交互式翻译界面
+
 ---
 
 ## 🚀 快速开始
@@ -120,7 +124,7 @@ NLP/
 
 ### 安装依赖
 ```bash
-pip install jieba pandas gensim transformers torch tqdm scikit-learn
+pip install jieba pandas gensim transformers torch tqdm scikit-learn nltk sacrebleu
 ```
 
 ### 运行示例
@@ -213,6 +217,37 @@ python src/predict.py
 正向评论,置信度:0.91
 ```
 
+#### 5. 中英机器翻译Seq2Seq项目
+```bash
+# 进入项目目录
+cd translation_seq2seq
+
+# 1. 数据预处理
+python src/process.py
+
+# 2. 训练模型
+python src/train.py
+
+# 3. 评估模型（BLEU-4）
+python src/evaluate.py
+
+# 4. 交互式翻译
+python src/predict.py
+```
+
+翻译效果示例：
+```
+========================================
+欢迎使用翻译模型(输入q或者quit退出)
+========================================
+中文： 你好世界
+翻译结果: Hello world
+----------------------------------------
+中文： 我喜欢自然语言处理
+翻译结果: I like natural language processing
+----------------------------------------
+```
+
 ---
 
 ## 📖 学习路径建议
@@ -240,14 +275,15 @@ python src/predict.py
 │   └─ 了解GRU的简化设计
 └─ 掌握多层RNN和双向RNN的使用
 
-第4阶段：动手实践
-├─ 运行 text_rep/*.ipynb
-│   └─ 掌握jieba分词和词向量训练
-├─ 完成 input_method_rnn 项目
-│   └─ 实现基于RNN的智能输入法
-├─ 完成 review_analyze_lstm 项目
-│   └─ 实现基于LSTM的情感分析
-└─ 尝试修改参数，观察效果变化
+第4阶段：Seq2Seq与机器翻译
+├─ 阅读 04_Seq2Seq.md
+│   ├─ 理解编码器-解码器架构
+│   ├─ 学习Teacher Forcing和推理策略
+│   └─ 完成中英翻译项目
+├─ 阅读 附录_TensorBoard使用指南.md
+│   └─ 掌握训练过程可视化
+└─ 阅读 附录_BLEU使用指南.md
+    └─ 掌握翻译质量评估方法
 
 第5阶段：深入探索
 ├─ 学习Attention机制
@@ -273,8 +309,11 @@ python src/predict.py
 | **RNN** | 循环神经网络，处理序列数据 |
 | **LSTM** | 长短期记忆网络，解决RNN长期依赖问题 |
 | **GRU** | 门控循环单元，LSTM的简化版本 |
-| **双向RNN** | 同时考虑过去和未来上下文的RNN |
-| **多层RNN** | 堆叠多个RNN层，学习层次化特征 |
+| **Seq2Seq** | 序列到序列模型，编码器-解码器架构 |
+| **Teacher Forcing** | 训练时使用真实标签作为解码器输入 |
+| **Beam Search** | 束搜索，保留多个候选序列的解码策略 |
+| **BLEU** | 机器翻译质量评估指标 |
+| **注意力机制** | 动态关注输入不同部分的技术 |
 
 ---
 
@@ -296,8 +335,9 @@ python src/predict.py
 - **sgns.weibo.word**: 微博词向量（SGNS算法，300维）
 
 ### 学习资料
-- 理论文档：`01_NLP导论.md`、`02_文本表示.md`、`03_RNN.md`、`03_LSTM.md`、`03_GRU.md`
-- 实践代码：`text_rep/*.ipynb`、`input_method_rnn/src/*.py`、`review_analyze_lstm/src/*.py`
+- 理论文档：`01_NLP导论.md`、`02_文本表示.md`、`03_RNN.md`、`03_LSTM.md`、`03_GRU.md`、`04_Seq2Seq.md`
+- 实践代码：`text_rep/*.ipynb`、`input_method_rnn/src/*.py`、`review_analyze_lstm/src/*.py`、`translation_seq2seq/src/*.py`
+- 工具指南：`附录_TensorBoard使用指南.md`、`附录_BLEU使用指南.md`
 
 ---
 
@@ -308,7 +348,9 @@ python src/predict.py
 - **2026-02**: 添加RNN、LSTM、GRU理论文档
 - **2026-02**: 添加智能输入法RNN项目完整代码
 - **2026-02**: 添加评论情感分析LSTM项目完整代码
+- **2026-02**: 添加Seq2Seq理论文档和中英翻译项目
 - **2026-02**: 添加TensorBoard使用指南附录
+- **2026-02**: 添加BLEU使用指南附录
 
 ---
 

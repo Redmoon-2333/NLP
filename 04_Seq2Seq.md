@@ -95,11 +95,40 @@ flowchart LR
 2. **循环编码**：通过RNN/LSTM/GRU逐层处理序列，更新隐藏状态
 3. **提取上下文**：取最后一个时间步的隐藏状态作为上下文向量
 
-**数学表达：**
+**代码实现：**
 
-```
-hₜ = RNN(xₜ, hₜ₋₁)    # 每个时间步更新隐藏状态
-C = h_T               # 取最后一个隐藏状态作为上下文向量
+```python
+class TranslationEncoder(nn.Module):
+    """翻译编码器（意图：将源语言序列编码为上下文向量）"""
+    
+    def __init__(self, vocab_size, padding_index):
+        super().__init__()
+        self.embedding = nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=config.EMBEDDING_DIM,
+            padding_idx=padding_index  # 警示：padding_idx确保<pad>标记不参与梯度计算
+        )
+        self.GRU = nn.GRU(
+            input_size=config.EMBEDDING_DIM,
+            hidden_size=config.HIDDEN_SIZE,
+            batch_first=True  # 意图：使用[batch, seq, feature]格式，符合PyTorch习惯
+        )
+    
+    def forward(self, x):
+        """
+        参数:
+            x: [batch_size, seq_len] 输入序列
+        返回:
+            last_hidden_state: [batch_size, hidden_size] 最后时刻隐藏状态
+        """
+        embed = self.embedding(x)  # [batch, seq_len, embedding_dim]
+        gru_out, hidden = self.GRU(embed)  # gru_out: [batch, seq_len, hidden_size]
+        
+        # 获取每个序列的实际长度（意图：处理变长序列，取真实最后一个时间步）
+        lengths = (x != self.embedding.padding_idx).sum(dim=1)
+        last_hidden_state = gru_out[torch.arange(gru_out.shape[0]), lengths - 1]
+        
+        return last_hidden_state  # [batch, hidden_size]
 ```
 
 **关键特性：**
@@ -127,15 +156,15 @@ flowchart LR
         
         START(["<START>"]) --> E1["Embedding"] --> D1
         D1 --> O1(["y₁"])
-        D1 --> D2["RNN/LSTM/GRU"]
+        D1 --> D2["RNN/LSTM/GRU"
         
         O1 --> E2["Embedding"] --> D2
         D2 --> O2(["y₂"])
-        D2 --> D3["RNN/LSTM/GRU"]
+        D2 --> D3["RNN/LSTM/GRU"
         
         O2 --> E3["Embedding"] --> D3
         D3 --> O3(["y₃"])
-        D3 --> D4["RNN/LSTM/GRU"]
+        D3 --> D4["RNN/LSTM/GRU"
         
         O3 --> E4["Embedding"] --> D4
         D4 --> O4(["<END>"])
@@ -155,11 +184,39 @@ flowchart LR
 2. **自回归生成**：每个时间步的输入是上一个时间步的输出
 3. **终止条件**：生成特殊标记`<END>`时停止
 
-**数学表达：**
+**代码实现：**
 
-```
-sₜ = RNN(yₜ₋₁, sₜ₋₁, C)    # 解码器隐藏状态更新
-yₜ = softmax(W·sₜ)          # 生成当前输出词的概率分布
+```python
+class TranslationDecoder(nn.Module):
+    """翻译解码器（意图：根据上下文向量自回归生成目标语言序列）"""
+    
+    def __init__(self, vocab_size, padding_index):
+        super().__init__()
+        self.embedding = nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=config.EMBEDDING_DIM,
+            padding_idx=padding_index
+        )
+        self.GRU = nn.GRU(
+            input_size=config.EMBEDDING_DIM,
+            hidden_size=config.HIDDEN_SIZE,
+            batch_first=True
+        )
+        self.linear = nn.Linear(in_features=config.HIDDEN_SIZE, out_features=vocab_size)
+    
+    def forward(self, x, hidden_0):
+        """
+        参数:
+            x: [batch_size, seq_len] 输入序列
+            hidden_0: [1, batch_size, hidden_size] 初始隐藏状态
+        返回:
+            output: [batch_size, seq_len, vocab_size] 词表分布
+            hidden_n: [1, batch_size, hidden_size] 最终隐藏状态
+        """
+        embed = self.embedding(x)  # [batch, seq_len, embedding_dim]
+        gru_out, hidden_n = self.GRU(embed, hidden_0)  # [batch, seq_len, hidden_size]
+        output = self.linear(gru_out)  # [batch, seq_len, vocab_size]
+        return output, hidden_n
 ```
 
 **两种解码策略：**
@@ -230,6 +287,18 @@ flowchart TB
 - 🔴 **红色**：上下文向量（信息压缩中心）
 - 🟢 **绿色**：输出序列的词
 
+**完整模型代码：**
+
+```python
+class TranslationModel(nn.Module):
+    """Seq2Seq翻译模型（编码器-解码器架构）"""
+    
+    def __init__(self, zh_vocab_size, en_vocab_size, zh_padding_index, en_padding_index):
+        super().__init__()
+        self.encoder = TranslationEncoder(zh_vocab_size, padding_index=zh_padding_index)
+        self.decoder = TranslationDecoder(en_vocab_size, padding_index=en_padding_index)
+```
+
 ---
 
 ## 4.3 模型训练和推理机制
@@ -240,9 +309,9 @@ flowchart TB
 
 **损失函数：** 交叉熵损失（Cross-Entropy Loss）
 
-```
-L = -Σ log P(yₜ | y₁, y₂, ..., yₜ₋₁, x)
-```
+$$
+L = -\sum \log P(y_t | y_1, y_2, ..., y_{t-1}, x)
+$$
 
 **训练流程：**
 
@@ -276,12 +345,58 @@ flowchart TB
 
 在训练时，解码器的输入使用真实的目标序列（Ground Truth），而不是上一个时间步的预测输出。
 
-| 方式 | 训练时解码器输入 | 优点 | 缺点 |
-|------|-----------------|------|------|
+| 方式                  | 训练时解码器输入  | 优点       | 缺点                      |
+| ------------------- | --------- | -------- | ----------------------- |
 | **Teacher Forcing** | 真实标签 yₜ₋₁ | 训练稳定、收敛快 | 训练和推理不一致（Exposure Bias） |
-| **Free Running** | 模型预测 ŷₜ₋₁ | 训练和推理一致 | 训练困难、误差累积 |
+| **Free Running**    | 模型预测 ŷₜ₋₁ | 训练和推理一致  | 训练困难、误差累积               |
 
 **Scheduled Sampling：** 逐步减少Teacher Forcing的比例，平衡两种方式的优点。
+
+**训练代码：**
+
+```python
+def train_one_epoch(model, dataloader, loss_fn, optimizer, device):
+    """训练一个轮次"""
+    model.train()
+    total_loss = 0
+    
+    for inputs, targets in tqdm(dataloader, desc='训练'):
+        # 数据移动到设备
+        encoder_inputs = inputs.to(device)
+        targets = targets.to(device)
+        
+        # 准备解码器输入和目标（意图：Teacher Forcing策略）
+        decoder_inputs = targets[:, :-1]  # 去掉<eos>
+        decoder_targets = targets[:, 1:]  # 去掉<sos>
+        
+        # 编码阶段
+        context_vector = model.encoder(encoder_inputs)
+        
+        # 解码阶段（自回归）
+        decoder_hidden = context_vector.unsqueeze(0)
+        decoder_outputs = []
+        seq_len = decoder_inputs.shape[1]
+        
+        for i in range(seq_len):
+            decoder_input = decoder_inputs[:, i].unsqueeze(1)
+            decoder_output, decoder_hidden = model.decoder(decoder_input, decoder_hidden)
+            decoder_outputs.append(decoder_output)
+        
+        # 合并输出并reshape
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        decoder_outputs = decoder_outputs.reshape(-1, decoder_outputs.shape[-1])
+        decoder_targets = decoder_targets.reshape(-1)
+        
+        # 计算损失并反向传播
+        loss = loss_fn(decoder_outputs, decoder_targets)
+        total_loss += loss.item()
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    
+    return total_loss / len(dataloader)
+```
 
 ---
 
@@ -319,6 +434,55 @@ flowchart TB
     style Y2 fill:#2ecc71,stroke:#333,stroke-width:2px
     style Y3 fill:#2ecc71,stroke:#333,stroke-width:2px
     style END fill:#f39c12,stroke:#333,stroke-width:2px
+```
+
+**推理代码：**
+
+```python
+def predict_batch(model, inputs, en_tokenizer, device):
+    """批量预测（自回归生成）"""
+    model.eval()
+    
+    with torch.no_grad():
+        # 编码阶段
+        context_vector = model.encoder(inputs)
+        
+        batch_size = inputs.shape[0]
+        hidden = context_vector.unsqueeze(0)
+        
+        # 初始化解码器输入为<sos>标记
+        decoder_input = torch.full([batch_size, 1], en_tokenizer.sos_token_index, device=device)
+        
+        generated = []
+        is_finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        
+        # 自回归生成
+        for i in range(config.SEQ_LEN):
+            decoder_output, hidden = model.decoder(decoder_input, hidden)
+            
+            # 贪心解码
+            next_token_indexes = torch.argmax(decoder_output, dim=-1)
+            generated.append(next_token_indexes)
+            
+            # 更新输入（自回归特性）
+            decoder_input = next_token_indexes
+            
+            # 检查是否生成<eos>
+            is_finished |= (next_token_indexes.squeeze(1) == en_tokenizer.eos_token_index)
+            if is_finished.all():
+                break
+        
+        # 处理预测结果
+        generated_tensor = torch.cat(generated, dim=1)
+        generated_list = generated_tensor.tolist()
+        
+        # 截断<eos>之后的标记
+        for index, sentence in enumerate(generated_list):
+            if en_tokenizer.eos_token_index in sentence:
+                eos_pos = sentence.index(en_tokenizer.eos_token_index)
+                generated_list[index] = sentence[:eos_pos]
+        
+        return generated_list
 ```
 
 **推理策略：**
@@ -363,7 +527,7 @@ y_t = argmax(P(y|y_1, ..., y_{t-1}, x))
 **功能需求：**
 1. 输入中文句子，输出英文翻译
 2. 支持变长序列处理
-3. 使用LSTM/GRU作为基础单元
+3. 使用GRU作为基础单元
 
 **示例：**
 
@@ -397,14 +561,13 @@ flowchart LR
 
 | 组件 | 选择 | 原因 |
 |------|------|------|
-| 编码器 | 双向LSTM | 捕获完整上下文 |
-| 解码器 | 单向LSTM | 自回归生成 |
-| 词嵌入 | 随机初始化 | 基础版本 |
-| 注意力 | 基础版本 | 后续可升级 |
+| 编码器 | GRU | 比LSTM轻量，训练更快 |
+| 解码器 | GRU | 与编码器保持一致 |
+| 中文分词 | 字符级 | 避免分词错误累积 |
+| 英文分词 | NLTK Treebank | 标准英文分词 |
+| 评估指标 | BLEU-4 | 机器翻译标准指标 |
 
-### 4.4.3 需求实现
-
-**项目结构：**
+### 4.4.3 项目结构
 
 ```
 translation_seq2seq/
@@ -414,24 +577,21 @@ translation_seq2seq/
 │   ├── dataset.py     # Dataset和DataLoader
 │   ├── model.py       # Seq2Seq模型定义
 │   ├── train.py       # 训练流程
-│   ├── evaluate.py    # 模型评估
+│   ├── evaluate.py    # BLEU评估
 │   ├── predict.py     # 预测接口
-│   └── utils.py       # 工具函数
+│   └── tokenizer.py   # 中英文分词器
 ├── data/
-│   ├── raw/           # 原始平行语料
-│   └── processed/     # 处理后的数据
+│   ├── raw/           # 原始平行语料(cmn.txt)
+│   └── processed/     # 处理后的JSONL数据
 ├── models/            # 保存的词表和模型权重
-└── logs/              # 训练日志
+└── logs/              # TensorBoard训练日志
 ```
 
-**1. 配置文件（config.py）**
+### 4.4.4 配置文件（config.py）
 
 ```python
 """
-配置文件
-
-功能描述:
-    定义模型超参数、路径配置等全局设置
+配置文件模块
 
 作者: Red_Moon
 创建日期: 2026-02
@@ -439,135 +599,168 @@ translation_seq2seq/
 
 from pathlib import Path
 
-# 路径配置
+# 项目根目录
 ROOT_DIR = Path(__file__).parent.parent
-DATA_DIR = ROOT_DIR / "data"
-MODELS_DIR = ROOT_DIR / "models"
+
+# 数据目录
+RAW_DATA_DIR = ROOT_DIR / "data" / "raw"
+PROCESSED_DATA_DIR = ROOT_DIR / "data" / "processed"
 LOGS_DIR = ROOT_DIR / "logs"
+MODELS_DIR = ROOT_DIR / "models"
 
-# 数据路径
-RAW_DATA_PATH = DATA_DIR / "raw" / "translation_pairs.txt"
-TRAIN_DATA_PATH = DATA_DIR / "processed" / "train.pkl"
-TEST_DATA_PATH = DATA_DIR / "processed" / "test.pkl"
-SRC_VOCAB_PATH = MODELS_DIR / "src_vocab.txt"
-TGT_VOCAB_PATH = MODELS_DIR / "tgt_vocab.txt"
-
-# 模型超参数
-SRC_VOCAB_SIZE = 5000      # 源语言词表大小
-TGT_VOCAB_SIZE = 5000      # 目标语言词表大小
-EMBEDDING_DIM = 256        # 词嵌入维度
-HIDDEN_SIZE = 512          # 隐藏层维度
-NUM_LAYERS = 2             # LSTM层数
-DROPOUT = 0.3              # Dropout概率
+# 序列长度配置
+SEQ_LEN = 128
 
 # 训练超参数
-BATCH_SIZE = 32
-LEARNING_RATE = 0.001
-EPOCHS = 50
-TEACHER_FORCING_RATIO = 0.5  # Teacher Forcing比例
-
-# 序列长度
-MAX_SRC_LEN = 50           # 最大源序列长度
-MAX_TGT_LEN = 50           # 最大目标序列长度
+BATCH_SIZE = 64
+EMBEDDING_DIM = 128
+HIDDEN_SIZE = 256
+LEARNING_RATE = 1e-3
+EPOCHS = 30
 ```
 
-**2. 数据预处理（process.py）**
+### 4.4.5 数据预处理（process.py）
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from tokenizer import EnglishTokenizer, ChineseTokenizer
+import config
+
+
+def process():
+    """数据处理主函数"""
+    print("开始处理数据")
+    
+    # 读取原始平行语料（cmn.txt格式：英文\t中文）
+    df = pd.read_csv(
+        config.RAW_DATA_DIR / "cmn.txt",
+        sep='\t',
+        header=None,
+        usecols=[0, 1],
+        names=["en", "zh"],
+        encoding='utf-8'
+    ).dropna()
+    
+    # 划分训练集和测试集
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+    
+    # 构建词表
+    ChineseTokenizer.build_vocab(train_df['zh'].tolist(), config.MODELS_DIR / 'zh_vocab.txt')
+    EnglishTokenizer.build_vocab(train_df['en'].tolist(), config.MODELS_DIR / 'en_vocab.txt')
+    
+    # 加载词表
+    zh_tokenizer = ChineseTokenizer.from_vocab(config.MODELS_DIR / 'zh_vocab.txt')
+    en_tokenizer = EnglishTokenizer.from_vocab(config.MODELS_DIR / 'en_vocab.txt')
+    
+    # 编码训练集
+    train_df['zh'] = train_df['zh'].apply(lambda x: zh_tokenizer.encode(x, add_sos_eos=False))
+    train_df['en'] = train_df['en'].apply(lambda x: en_tokenizer.encode(x, add_sos_eos=True))
+    train_df.to_json(config.PROCESSED_DATA_DIR / 'train.jsonl', orient='records', lines=True)
+    
+    # 编码测试集
+    test_df['zh'] = test_df['zh'].apply(lambda x: zh_tokenizer.encode(x, add_sos_eos=False))
+    test_df['en'] = test_df['en'].apply(lambda x: en_tokenizer.encode(x, add_sos_eos=True))
+    test_df.to_json(config.PROCESSED_DATA_DIR / 'test.jsonl', orient='records', lines=True)
+    
+    print("数据处理完成")
+
+
+if __name__ == '__main__':
+    process()
+```
+
+### 4.4.6 分词器（tokenizer.py）
 
 ```python
 """
-数据预处理模块
-
-功能描述:
-    对原始平行语料进行清洗、分词、构建词表、编码等处理
+分词器模块
 
 作者: Red_Moon
 创建日期: 2026-02
 """
 
-# TODO: 实现数据预处理逻辑
+import jieba
+from nltk import TreebankWordTokenizer, TreebankWordDetokenizer
+from tqdm import tqdm
+
+
+class BaseTokenizer:
+    """分词器基类"""
+    
+    pad_token = '<pad>'
+    unk_token = '<unk>'
+    sos_token = '<sos>'
+    eos_token = '<eos>'
+    
+    def __init__(self, vocab_list):
+        self.vocab_list = vocab_list
+        self.vocab_size = len(vocab_list)
+        self.word2index = {word: index for index, word in enumerate(vocab_list)}
+        self.index2word = {index: word for index, word in enumerate(vocab_list)}
+        
+        self.pad_token_index = self.word2index[self.pad_token]
+        self.unk_token_index = self.word2index[self.unk_token]
+        self.sos_token_index = self.word2index[self.sos_token]
+        self.eos_token_index = self.word2index[self.eos_token]
+    
+    @classmethod
+    def tokenize(cls, text):
+        raise NotImplementedError
+    
+    def encode(self, text, add_sos_eos=False):
+        """文本编码"""
+        tokens = self.tokenize(text)
+        if add_sos_eos:
+            tokens = [self.sos_token] + tokens + [self.eos_token]
+        return [self.word2index.get(token, self.unk_token_index) for token in tokens]
+    
+    @classmethod
+    def build_vocab(cls, sentences, vocab_path):
+        """构建词表"""
+        vocab_set = set()
+        for sentence in tqdm(sentences, desc="构建词表"):
+            vocab_set.update(cls.tokenize(sentence))
+        
+        vocab_list = [cls.pad_token, cls.unk_token, cls.sos_token, cls.eos_token]
+        vocab_list += [token for token in vocab_set if token.strip() != ""]
+        
+        with open(vocab_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(vocab_list))
+    
+    @classmethod
+    def from_vocab(cls, vocab_path):
+        """从文件加载词表"""
+        with open(vocab_path, 'r', encoding='utf-8') as f:
+            vocab_list = [line.strip() for line in f.readlines()]
+        return cls(vocab_list)
+
+
+class ChineseTokenizer(BaseTokenizer):
+    """中文分词器（字符级）"""
+    
+    @classmethod
+    def tokenize(cls, text):
+        return list(text)
+
+
+class EnglishTokenizer(BaseTokenizer):
+    """英文分词器"""
+    
+    tokenizer = TreebankWordTokenizer()
+    detokenizer = TreebankWordDetokenizer()
+    
+    @classmethod
+    def tokenize(cls, text):
+        return cls.tokenizer.tokenize(text)
+    
+    def decode(self, indexes):
+        """索引解码为文本"""
+        tokens = [self.index2word[index] for index in indexes]
+        return self.detokenizer.detokenize(tokens)
 ```
 
-**3. Dataset类（dataset.py）**
-
-```python
-"""
-Dataset和DataLoader模块
-
-功能描述:
-    定义PyTorch Dataset类和DataLoader，支持批处理和填充
-
-作者: Red_Moon
-创建日期: 2026-02
-"""
-
-# TODO: 实现Dataset和DataLoader
-```
-
-**4. 模型定义（model.py）**
-
-```python
-"""
-Seq2Seq模型定义模块
-
-功能描述:
-    定义基于LSTM的Seq2Seq模型，包含编码器和解码器
-
-作者: Red_Moon
-创建日期: 2026-02
-"""
-
-# TODO: 实现Encoder、Decoder和Seq2Seq模型
-```
-
-**5. 训练流程（train.py）**
-
-```python
-"""
-模型训练模块
-
-功能描述:
-    实现Seq2Seq模型的完整训练流程，支持Teacher Forcing
-
-作者: Red_Moon
-创建日期: 2026-02
-"""
-
-# TODO: 实现训练流程
-```
-
-**6. 预测接口（predict.py）**
-
-```python
-"""
-模型预测模块
-
-功能描述:
-    实现Seq2Seq模型的推理功能，支持贪心搜索和束搜索
-
-作者: Red_Moon
-创建日期: 2026-02
-"""
-
-# TODO: 实现预测逻辑
-```
-
-**7. 评估脚本（evaluate.py）**
-
-```python
-"""
-模型评估模块
-
-功能描述:
-    使用BLEU等指标评估翻译质量
-
-作者: Red_Moon
-创建日期: 2026-02
-"""
-
-# TODO: 实现评估逻辑
-```
-
-**运行示例：**
+### 4.4.7 运行示例
 
 ```bash
 # 1. 数据预处理
@@ -576,11 +769,25 @@ python src/process.py
 # 2. 训练模型
 python src/train.py
 
-# 3. 评估模型
+# 3. 评估模型（BLEU-4）
 python src/evaluate.py
 
 # 4. 交互式翻译
 python src/predict.py
+```
+
+**预测效果示例：**
+
+```
+========================================
+欢迎使用翻译模型(输入q或者quit退出)
+========================================
+中文： 你好世界
+翻译结果: Hello world
+----------------------------------------
+中文： 我喜欢自然语言处理
+翻译结果: I like natural language processing
+----------------------------------------
 ```
 
 ---
@@ -756,6 +963,8 @@ flowchart TB
 - [RNN（循环神经网络）](./03_RNN.md) - Seq2Seq的基础单元
 - [LSTM（长短期记忆网络）](./03_LSTM.md) - 常用编码器/解码器
 - [GRU（门控循环单元）](./03_GRU.md) - LSTM的轻量替代
+- [附录：TensorBoard使用指南](./附录_TensorBoard使用指南.md) - 训练可视化
+- [附录：BLEU使用指南](./附录_BLEU使用指南.md) - 翻译质量评估
 
 ---
 

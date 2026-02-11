@@ -801,6 +801,21 @@ review_analyze_lstm/
 
 #### 详细实现
 
+> **【与RNN案例的对比说明】**
+> 
+> 本案例与RNN案例（智能输入法）相比，有以下核心差异：
+> 
+> | 对比维度 | RNN案例 | LSTM案例（本案例） |
+> |----------|---------|-------------------|
+> | **任务类型** | 多分类（预测下一个词） | 二分类（情感分析） |
+> | **输出维度** | vocab_size | 1 |
+> | **模型结构** | `nn.RNN` | `nn.LSTM`（增加细胞状态） |
+> | **损失函数** | `CrossEntropyLoss` | `BCEWithLogitsLoss` |
+> | **序列处理** | 固定长度，直接取最后一维 | 变长序列，通过padding_idx找有效长度 |
+> | **前向传播返回值** | `output, hidden` | `output, (hidden, cell)` |
+> 
+> 以下代码中，**【与RNN差异】** 标记表示与RNN案例不同的部分。
+
 **1. 配置文件（config.py）**
 
 > 文件路径：`review_analyze_lstm/src/config.py`
@@ -833,6 +848,7 @@ MODELS_DIR = ROOT_DIR / "models"
 # =============================================================================
 # 模型超参数配置
 # =============================================================================
+# 【与RNN差异】序列长度更长（RNN通常较短，如5-10；LSTM可处理更长序列）
 SEQ_LEN = 128
 BATCH_SIZE = 64
 EMBEDDING_DIM = 128
@@ -878,6 +894,7 @@ def process():
         7. 保存处理后的训练集和测试集为JSONL格式
     """
     print("开始处理数据")
+    # 【与RNN差异】使用CSV格式而非JSONL，且包含标签列（情感分析需要）
     df = pd.read_csv(config.RAW_DATA_DIR / "online_shopping_10_cats.csv", 
                      usecols=["label", "review"], 
                      encoding="utf-8").dropna().sample(frac=0.1)
@@ -920,12 +937,14 @@ import torch
 
 class ReviewAnalyzeModel(nn.Module):
     """
-    基于LSTM的评论情感分析模型
+    【与RNN差异】基于LSTM的评论情感分析模型
 
     架构说明:
         1. Embedding层: 将词索引映射为稠密向量表示
         2. LSTM层: 建模序列的时序依赖关系，捕获上下文信息
+           【与RNN差异】LSTM增加细胞状态，可解决长期依赖问题
         3. Linear层: 将LSTM最终隐藏状态映射到输出空间
+           【与RNN差异】输出维度为1（二分类），而非vocab_size
     """
 
     def __init__(self, vocab_size, padding_index):
@@ -934,11 +953,14 @@ class ReviewAnalyzeModel(nn.Module):
 
         参数:
             vocab_size (int): 词表大小，决定Embedding层的输入维度
-            padding_index (int): 填充标记<pad>的索引，用于处理变长序列
+            padding_index (int): 【与RNN差异】填充标记<pad>的索引，用于处理变长序列
         """
         super().__init__()
+        # 【与RNN差异】增加padding_idx参数，支持变长序列处理
         self.embedding = nn.Embedding(vocab_size, config.EMBEDDING_DIM, padding_idx=padding_index)
+        # 【与RNN差异】使用nn.LSTM替代nn.RNN，增加细胞状态
         self.lstm = nn.LSTM(input_size=config.EMBEDDING_DIM, hidden_size=config.HIDDEN_SIZE, batch_first=True)
+        # 【与RNN差异】输出维度为1（二分类），而非vocab_size（多分类）
         self.linear = nn.Linear(config.HIDDEN_SIZE, 1)
 
     def forward(self, x: torch.Tensor):
@@ -954,11 +976,14 @@ class ReviewAnalyzeModel(nn.Module):
         # x.shape : [batch_size, seq_len]
         embed = self.embedding(x)
         # embed.shape : [batch_size, seq_len, embedding_dim]
+        # 【与RNN差异】LSTM返回(output, (hidden, cell))，RNN返回(output, hidden)
         lstm_out, (_, _) = self.lstm(embed)
         # lstm_out.shape : [batch_size, seq_len, hidden_size]
+        # 【与RNN差异】处理变长序列：通过padding_idx找到每个序列的实际长度
         batch_indexes = torch.arange(0, lstm_out.shape[0])
         lengths = (x != self.embedding.padding_idx).sum(dim=1)
         last_hidden = lstm_out[batch_indexes, lengths - 1]
+        # 【RNN差异对比】RNN案例直接取output[:, -1, :]，假设固定长度
         # last_hidden.shape : [batch_size, hidden_size]
         out = self.linear(last_hidden).squeeze(-1)
         # out.shape : [batch_size]
@@ -1024,9 +1049,11 @@ def train():
     # 3. 分词器
     tokenizer = JiebaTokenizer.from_vocab(config.MODELS_DIR / "vocab.txt")
     # 4. 模型
+    # 【与RNN差异】传入padding_index参数，支持变长序列
     model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, 
                                padding_index=tokenizer.pad_token_index).to(device)
-    # 5. 损失函数
+    # 5. 【与RNN差异】二分类损失函数：BCEWithLogitsLoss
+    #    RNN案例使用：CrossEntropyLoss（多分类）
     loss_fn = torch.nn.BCEWithLogitsLoss()
     # 6. 优化器
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
@@ -1078,6 +1105,7 @@ def predict_batch(model, inputs):
     model.eval()
     with torch.no_grad():
         output = model(inputs)
+    # 【与RNN差异】二分类使用sigmoid获取概率，多分类使用softmax
     batch_result = torch.sigmoid(output)
     return batch_result.tolist()
 
@@ -1105,6 +1133,7 @@ def run_predict():
     tokenizer = JiebaTokenizer.from_vocab(config.MODELS_DIR / 'vocab.txt')
     print("词表加载成功")
 
+    # 【与RNN差异】传入padding_index参数
     model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, 
                                padding_index=tokenizer.pad_token_index).to(device)
     model.load_state_dict(torch.load(config.MODELS_DIR / 'best.pt'))
@@ -1125,6 +1154,7 @@ def run_predict():
 
         result = predict(user_input, model, tokenizer, device)
         print(f'预测结果: {result}')
+        # 【与RNN差异】二分类结果解释（>0.5为正，<0.5为负）
         if result > 0.5:
             print(f"正向评论,置信度:{result}")
         else:

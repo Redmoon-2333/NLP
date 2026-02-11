@@ -684,6 +684,27 @@ review_analyze_gru/
 
 #### 详细实现
 
+> **【与RNN/LSTM案例的对比说明】**
+> 
+> 本案例与RNN、LSTM案例相比，有以下核心差异：
+> 
+> | 对比维度 | RNN案例 | LSTM案例 | GRU案例（本案例） |
+> |----------|---------|----------|------------------|
+> | **任务类型** | 多分类（预测下一个词） | 二分类（情感分析） | 二分类（情感分析） |
+> | **输出维度** | vocab_size | 1 | 1 |
+> | **模型结构** | `nn.RNN` | `nn.LSTM`（3门+细胞状态） | `nn.GRU`（2门，无细胞状态） |
+> | **状态数量** | 1个（hidden） | 2个（hidden+cell） | 1个（hidden） |
+> | **参数量** | 基准 | 约4×RNN | 约3×RNN（比LSTM少25%） |
+> | **损失函数** | `CrossEntropyLoss` | `BCEWithLogitsLoss` | `BCEWithLogitsLoss` |
+> | **前向传播返回值** | `output, hidden` | `output, (hidden, cell)` | `output, hidden`（同RNN） |
+> 
+> **GRU vs LSTM 核心差异：**
+> - **门控数量**：LSTM有3个门（遗忘、输入、输出），GRU有2个门（更新、重置）
+> - **细胞状态**：LSTM有独立的细胞状态Cₜ，GRU将细胞状态合并到隐藏状态中
+> - **前向传播返回值**：GRU同RNN返回 `(output, hidden)`，LSTM返回 `(output, (hidden, cell))`
+> 
+> 以下代码中，**【与LSTM差异】** 标记表示与LSTM案例不同的部分。
+
 **1. 模型定义（model.py）**
 
 ```python
@@ -706,11 +727,13 @@ import torch
 
 class ReviewAnalyzeModel(nn.Module):
     """
-    基于GRU的评论情感分析模型
+    【与LSTM差异】基于GRU的评论情感分析模型
 
     架构说明:
         1. Embedding层: 将词索引映射为稠密向量表示
         2. GRU层: 建模序列的时序依赖关系，捕获上下文信息
+           【与LSTM差异】使用nn.GRU替代nn.LSTM，门控从3个减少到2个
+           【与LSTM差异】无细胞状态，参数量减少约25%
         3. Linear层: 将GRU最终隐藏状态映射到输出空间
     """
 
@@ -724,6 +747,8 @@ class ReviewAnalyzeModel(nn.Module):
         """
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, config.EMBEDDING_DIM, padding_idx=padding_index)
+        # 【与LSTM差异】使用nn.GRU替代nn.LSTM
+        # GRU只有更新门和重置门，无细胞状态，参数量更少
         self.gru = nn.GRU(input_size=config.EMBEDDING_DIM, hidden_size=config.HIDDEN_SIZE, batch_first=True)
         self.linear = nn.Linear(config.HIDDEN_SIZE, 1)
 
@@ -740,8 +765,11 @@ class ReviewAnalyzeModel(nn.Module):
         # x.shape : [batch_size, seq_len]
         embed = self.embedding(x)
         # embed.shape : [batch_size, seq_len, embedding_dim]
+        # 【与LSTM差异】GRU返回(output, hidden)，LSTM返回(output, (hidden, cell))
+        # 【与RNN相同】GRU的前向传播返回值与RNN一致
         gru_out, _ = self.gru(embed)
         # gru_out.shape : [batch_size, seq_len, hidden_size]
+        # 【同LSTM】处理变长序列：通过padding_idx找到每个序列的实际长度
         batch_indexes = torch.arange(0, gru_out.shape[0])
         lengths = (x != self.embedding.padding_idx).sum(dim=1)
         last_hidden = gru_out[batch_indexes, lengths - 1]
@@ -803,9 +831,10 @@ def train():
     # 3. 分词器
     tokenizer = JiebaTokenizer.from_vocab(config.MODELS_DIR / "vocab.txt")
     # 4. 模型
+    # 【与LSTM差异】使用ReviewAnalyzeModel（内部使用GRU而非LSTM）
     model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, 
                                padding_index=tokenizer.pad_token_index).to(device)
-    # 5. 损失函数
+    # 5. 损失函数（同LSTM：二分类使用BCEWithLogitsLoss）
     loss_fn = torch.nn.BCEWithLogitsLoss()
     # 6. 优化器
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
@@ -852,6 +881,7 @@ def predict_batch(model, inputs):
     model.eval()
     with torch.no_grad():
         output = model(inputs)
+    # 【同LSTM】二分类使用sigmoid获取概率
     batch_result = torch.sigmoid(output)
     return batch_result.tolist()
 
@@ -876,6 +906,7 @@ def run_predict():
     tokenizer = JiebaTokenizer.from_vocab(config.MODELS_DIR / 'vocab.txt')
     print("词表加载成功")
 
+    # 【与LSTM差异】使用GRU版本的ReviewAnalyzeModel
     model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, 
                                padding_index=tokenizer.pad_token_index).to(device)
     model.load_state_dict(torch.load(config.MODELS_DIR / 'best.pt'))
@@ -896,11 +927,60 @@ def run_predict():
 
         result = predict(user_input, model, tokenizer, device)
         print(f'预测结果: {result}')
+        # 【同LSTM】二分类结果解释（>0.5为正，<0.5为负）
         if result > 0.5:
             print(f"正向评论,置信度:{result}")
         else:
             print(f"负向评论,置信度:{1-result}")
         print("-" * 40)
+```
+
+---
+
+**【三模型案例代码对比总结】**
+
+```mermaid
+flowchart TB
+    subgraph Comparison["RNN vs LSTM vs GRU 案例代码对比"]
+        direction TB
+        
+        subgraph Task["任务类型"]
+            RNN_Task["RNN: 多分类<br/>预测下一个词"]
+            LSTM_Task["LSTM: 二分类<br/>情感分析"]
+            GRU_Task["GRU: 二分类<br/>情感分析"]
+        end
+        
+        subgraph ModelStruct["模型结构差异"]
+            RNN_Struct["nn.RNN<br/>返回: output, hidden"]
+            LSTM_Struct["nn.LSTM<br/>返回: output, hidden, cell<br/>3个门控 + 细胞状态"]
+            GRU_Struct["nn.GRU<br/>返回: output, hidden<br/>2个门控，无细胞状态"]
+        end
+        
+        subgraph Loss["损失函数"]
+            RNN_Loss["CrossEntropyLoss<br/>多分类交叉熵"]
+            LSTM_Loss["BCEWithLogitsLoss<br/>二分类交叉熵"]
+            GRU_Loss["BCEWithLogitsLoss<br/>二分类交叉熵"]
+        end
+        
+        subgraph Output["输出处理"]
+            RNN_Out["output[:, -1, :]<br/>固定长度取最后"]
+            LSTM_Out["batch_indexes, lengths-1<br/>变长序列处理"]
+            GRU_Out["batch_indexes, lengths-1<br/>变长序列处理"]
+        end
+        
+        subgraph Predict["预测输出"]
+            RNN_Pred["softmax + topk<br/>返回Top-K候选词"]
+            LSTM_Pred["sigmoid<br/>返回正/负向概率"]
+            GRU_Pred["sigmoid<br/>返回正/负向概率"]
+        end
+    end
+    
+    style RNN_Task fill:#3498db,stroke:#333,stroke-width:2px,color:#fff
+    style LSTM_Task fill:#9b59b6,stroke:#333,stroke-width:2px,color:#fff
+    style GRU_Task fill:#e67e22,stroke:#333,stroke-width:2px,color:#fff
+    style RNN_Struct fill:#3498db,stroke:#333,stroke-width:2px,color:#fff
+    style LSTM_Struct fill:#9b59b6,stroke:#333,stroke-width:2px,color:#fff
+    style GRU_Struct fill:#e67e22,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 #### 运行示例

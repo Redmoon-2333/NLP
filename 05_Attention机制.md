@@ -1634,7 +1634,14 @@ def predict_batch(model, inputs, en_tokenizer, device):
             next_token_indexes = torch.argmax(decoder_output, dim=-1)  # [batch, 1]
             generated.append(next_token_indexes)
             
-            # 更新输入（意图：自回归特性，当前输出作为下一步输入）
+            # 【RNN自回归特性】
+            # 意图：将当前预测的词作为下一步的唯一输入
+            # 
+            # RNN与Transformer自回归的关键差异：
+            # - RNN: decoder_input = next_token（仅传入上一个词）
+            #        历史信息通过 hidden state 隐式传递
+            # - Transformer: decoder_input = [sos, w1, w2, ..., w_i]（传入所有已生成的词）
+            #                历史信息通过 Self-Attention 显式计算
             decoder_input = next_token_indexes
             
             # 检查是否生成<eos>（意图：提前终止已完成序列）

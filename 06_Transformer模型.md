@@ -2106,8 +2106,10 @@ sequenceDiagram
         Decoder->>Decoder: 2. 计算Cross-Attention
         Decoder->>Decoder: 3. Feed Forward
         Decoder->>Output: 预测下一个词
-        Output->>Decoder: 作为下一步输入
+        Output->>Decoder: 拼接到已有序列末尾
     end
+    
+    Note over Decoder,Output: 【Transformer自回归特性】<br/>每步输入=[sos, w1, w2, ..., w_i]<br/>而非仅上一个词（区别于RNN）
 ```
 
 **解码策略：**
@@ -2181,6 +2183,124 @@ generated_text = tokenizer.decode(outputs[0])
 ```
 
 ### 6.4.2 使用PyTorch原生实现
+
+**PyTorch nn.Transformer API参数详解**
+
+PyTorch提供了`torch.nn.Transformer`模块，以下是核心API的参数说明：
+
+#### transformer.forward() 参数
+
+| 参数名 | 类型 | 形状 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `src` | Tensor | $(S, N, E)$ 或 $(N, S, E)$ | 必需 | 源语言序列（编码器输入），$S$为源序列长度，$N$为batch_size，$E$为嵌入维度 |
+| `tgt` | Tensor | $(T, N, E)$ 或 $(N, T, E)$ | 必需 | 目标语言序列（解码器输入），$T$为目标序列长度 |
+| `src_mask` | Tensor | $(S, S)$ | None | 源序列的自注意力掩码，用于阻止某些位置参与注意力计算 |
+| `tgt_mask` | Tensor | $(T, T)$ | None | 目标序列的自注意力掩码（因果掩码），防止解码器看到未来信息 |
+| `memory_mask` | Tensor | $(T, S)$ | None | 编码器-解码器注意力掩码，控制解码器对编码器输出的关注范围 |
+| `src_key_padding_mask` | Tensor | $(N, S)$ | None | 源序列填充掩码，`True`表示该位置为`<pad>`应被忽略 |
+| `tgt_key_padding_mask` | Tensor | $(N, T)$ | None | 目标序列填充掩码，`True`表示该位置为`<pad>`应被忽略 |
+| `memory_key_padding_mask` | Tensor | $(N, S)$ | None | 编码器输出的填充掩码，用于Cross-Attention中屏蔽填充位置 |
+
+**掩码类型对比：**
+
+```
+src_mask (自注意力掩码):
+  用途: 编码器Self-Attention
+  形状: [src_len, src_len]
+  示例: 全1矩阵（无限制）
+  
+tgt_mask (因果掩码):
+  用途: 解码器Masked Self-Attention
+  形状: [tgt_len, tgt_len]
+  示例: 下三角矩阵（防止看到未来）
+  
+src_key_padding_mask (填充掩码):
+  用途: 屏蔽<pad>位置
+  形状: [batch_size, src_len]
+  示例: [False, False, True, True] 表示后两个位置是填充
+```
+
+#### transformer.encoder() 参数
+
+| 参数名 | 类型 | 形状 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `src` | Tensor | $(S, N, E)$ 或 $(N, S, E)$ | 必需 | 源语言序列输入 |
+| `src_mask` | Tensor | $(S, S)$ | None | 自注意力掩码，控制位置间的注意力关系 |
+| `src_key_padding_mask` | Tensor | $(N, S)$ | None | 填充掩码，`True`位置不参与注意力计算 |
+
+**编码器掩码使用示例：**
+
+```python
+# src_key_padding_mask示例
+# 假设batch_size=2, src_len=5
+src = torch.tensor([
+    [1, 2, 3, 4, 5],      # 有效长度5
+    [6, 7, 8, 0, 0]       # 有效长度3，后两个是<pad>
+])
+
+# 创建填充掩码 (True表示要屏蔽的位置)
+src_key_padding_mask = torch.tensor([
+    [False, False, False, False, False],  # 全部有效
+    [False, False, False, True, True]     # 后两个是填充
+])
+
+# 编码器前向传播
+memory = transformer.encoder(src, src_key_padding_mask=src_key_padding_mask)
+```
+
+#### transformer.decoder() 参数
+
+| 参数名 | 类型 | 形状 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `tgt` | Tensor | $(T, N, E)$ 或 $(N, T, E)$ | 必需 | 目标语言序列输入 |
+| `memory` | Tensor | $(S, N, E)$ 或 $(N, S, E)$ | 必需 | 编码器输出（作为Cross-Attention的Key/Value来源） |
+| `tgt_mask` | Tensor | $(T, T)$ | None | 因果掩码，下三角矩阵，防止看到未来信息 |
+| `memory_mask` | Tensor | $(T, S)$ | None | Cross-Attention掩码，控制解码器对编码器的关注范围 |
+| `tgt_key_padding_mask` | Tensor | $(N, T)$ | None | 目标序列填充掩码，`True`位置不参与注意力计算 |
+| `memory_key_padding_mask` | Tensor | $(N, S)$ | None | 编码器输出的填充掩码，用于Cross-Attention |
+
+**解码器掩码使用示例：**
+
+```python
+# tgt_mask示例 (因果掩码)
+# 防止解码器在生成第i个词时看到第i+1及之后的词
+tgt_len = 5
+tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len) * float('-inf'), diagonal=1)
+# 结果:
+# [[0, -inf, -inf, -inf, -inf],
+#  [0,   0,  -inf, -inf, -inf],
+#  [0,   0,    0,  -inf, -inf],
+#  [0,   0,    0,    0,  -inf],
+#  [0,   0,    0,    0,    0]]
+
+# tgt_key_padding_mask示例
+tgt = torch.tensor([
+    [1, 2, 3, 4, 0],      # 有效长度4，最后一个是<pad>
+    [5, 6, 0, 0, 0]       # 有效长度2，后三个是<pad>
+])
+
+tgt_key_padding_mask = torch.tensor([
+    [False, False, False, False, True],   # 最后一个填充
+    [False, False, True, True, True]      # 后三个填充
+])
+
+# 解码器前向传播
+output = transformer.decoder(
+    tgt, 
+    memory, 
+    tgt_mask=tgt_mask,
+    tgt_key_padding_mask=tgt_key_padding_mask,
+    memory_key_padding_mask=src_key_padding_mask
+)
+```
+
+**三种掩码的作用对比：**
+
+| 掩码类型 | 作用位置 | 形状 | 典型用途 |
+|---------|---------|------|---------|
+| `*_mask` | 注意力分数矩阵 | $(L, L)$ | 因果约束、位置间关系控制 |
+| `*_key_padding_mask` | Key/Value位置 | $(N, L)$ | 屏蔽填充位置`<pad>` |
+| `memory_mask` | Cross-Attention | $(T, S)$ | 控制解码器对编码器的关注 |
 
 **模型定义：**
 
@@ -2306,34 +2426,69 @@ translation_transformer/
 """
 配置文件模块
 
+功能描述:
+    集中管理项目的所有配置参数，包括路径配置、模型超参数、训练参数等。
+    采用集中式配置便于参数调整和实验管理。
+
+设计原则:
+    - 路径配置：使用pathlib保证跨平台兼容性
+    - 超参数：参考Transformer原论文设置，可根据硬件调整
+
 作者: Red_Moon
 创建日期: 2026-02
 """
 
 from pathlib import Path
 
-# 项目根目录
+# ==================== 路径配置 ====================
+# 项目根目录（意图：确保所有路径基于项目根目录，保证跨平台兼容性）
 ROOT_DIR = Path(__file__).parent.parent
 
 # 数据目录
-RAW_DATA_DIR = ROOT_DIR / "data" / "raw"
-PROCESSED_DATA_DIR = ROOT_DIR / "data" / "processed"
-LOGS_DIR = ROOT_DIR / "logs"
-MODELS_DIR = ROOT_DIR / "models"
+RAW_DATA_DIR = ROOT_DIR / "data" / "raw"           # 原始数据目录（存放cmn.txt）
+PROCESSED_DATA_DIR = ROOT_DIR / "data" / "processed"  # 处理后数据目录（存放jsonl文件）
+LOGS_DIR = ROOT_DIR / "logs"                       # TensorBoard日志目录
+MODELS_DIR = ROOT_DIR / "models"                   # 模型权重和词表保存目录
 
-# 序列长度配置
-SEQ_LEN = 128
+# ==================== 序列长度配置 ====================
+SEQ_LEN = 128  # 最大序列长度
+# 意图：平衡内存占用和语义完整性
+# 警示：增大序列长度会显著增加显存占用（Self-Attention复杂度为O(n²)）
 
-# 【与V2.0差异】Transformer超参数
-BATCH_SIZE = 64
-D_MODEL = 512          # 【与V2.0差异】模型维度
-D_FF = 2048            # 【与V2.0差异】前馈网络维度
-NUM_HEADS = 8          # 【与V2.0差异】注意力头数
-NUM_LAYERS = 6         # 【与V2.0差异】编码器/解码器层数
-DROPOUT = 0.1          # 【与V2.0差异】Dropout概率
-LEARNING_RATE = 1e-4   # 【与V2.0差异】学习率调整
-WARMUP_STEPS = 4000    # 【与V2.0差异】学习率预热步数
-EPOCHS = 30
+# ==================== 训练超参数 ====================
+BATCH_SIZE = 64  # 批次大小
+# 意图：在显存限制和训练稳定性之间取得平衡
+# 警示：批次大小影响梯度估计的方差，过大可能导致收敛到较差的局部最优
+
+DIM_MODEL = 128  # 词嵌入维度（d_model）
+# 意图：决定模型的表示能力
+# 【与原论文差异】原论文d_model=512，此处为教学目的简化
+
+HIDDEN_SIZE = 256  # 隐藏层维度（d_ff）
+# 意图：Feed Forward网络的中间层维度
+# 警示：增大可提升表达能力但会增加计算量
+# 【与原论文差异】原论文d_ff=2048，此处按比例缩小
+
+LEARNING_RATE = 1e-3  # 学习率
+# 警示：过大导致震荡，过小收敛慢
+# 【与原论文差异】原论文使用Noam调度器，此处简化为固定学习率
+
+EPOCHS = 30  # 训练轮数
+# 意图：根据数据集大小和模型复杂度调整
+
+# ==================== Transformer架构参数 ====================
+NUM_HEADS = 4  # 注意力头数
+# 意图：并行处理不同位置的信息，捕捉不同类型的关系
+# 约束：d_model必须能被num_heads整除，即 d_k = d_model / num_heads
+# 【与原论文差异】原论文num_heads=8，此处为教学目的简化
+
+NUM_ENCODER_LAYERS = 2  # 编码器层数
+# 意图：增加深度以捕捉更复杂的特征
+# 【与原论文差异】原论文N=6，此处为教学目的简化
+
+NUM_DECODER_LAYERS = 2  # 解码器层数
+# 意图：增加深度以生成更复杂的序列
+# 【与原论文差异】原论文N=6，此处为教学目的简化
 ```
 
 **2. 模型实现（model.py）**
@@ -2343,414 +2498,279 @@ EPOCHS = 30
 模型定义模块
 
 功能描述:
-    定义Transformer翻译模型（编码器-解码器架构）。
-    【与V2.0核心差异】完全基于Attention，摒弃RNN结构
+    定义Seq2Seq翻译模型（编码器-解码器架构）。
+    使用PyTorch内置的nn.Transformer组件构建完整的翻译模型。
+
+核心组件:
+    - PositionEncoding: 位置编码层，为输入注入位置信息
+    - TranslationModel: 完整的翻译模型，包含编码器和解码器
+
+设计说明:
+    本实现使用PyTorch内置的nn.Transformer，简化了手动实现Multi-Head Attention的复杂度。
+    适合初学者理解Transformer的整体架构和数据流向。
 
 作者: Red_Moon
 创建日期: 2026-02
 """
 
 import math
+
 import torch
 from torch import nn
 import config
 
 
-class PositionalEncoding(nn.Module):
+class PositionEncoding(nn.Module):
     """
-    【与V2.0核心差异】位置编码 - V2.0中没有此组件（RNN隐式编码位置）
+    位置编码层
     
-    意图：为输入序列注入位置信息，弥补Attention的位置无关性
-    原理：使用正弦/余弦函数生成位置编码，支持外推到更长序列
+    功能:
+        为输入序列注入位置信息，弥补Self-Attention的位置无关性。
+        Self-Attention本身无法区分不同位置的token，需要显式添加位置编码。
+    
+    原理:
+        使用正弦/余弦函数生成位置编码:
+        - PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+        - PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+        
+        其中pos是位置索引，i是维度索引。
+    
+    优势:
+        1. 每个位置有唯一编码
+        2. 编码值有界[-1, 1]
+        3. 可以外推到训练时未见过的长度
+        4. 相对位置可以通过线性变换得到
     
     输入输出:
-        - x: [batch, seq_len, d_model] 输入嵌入
-        - output: [batch, seq_len, d_model] 加入位置编码后的嵌入
+        - 输入: [batch_size, seq_len, d_model] 词嵌入
+        - 输出: [batch_size, seq_len, d_model] 加入位置编码后的嵌入
     """
-    
-    def __init__(self, d_model, max_len=5000):
-        super().__init__()
-        
-        # 预计算位置编码矩阵 [max_len, d_model]
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        
-        # 计算div_term: 10000^(2i/d_model)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * 
-            (-math.log(10000.0) / d_model)
-        )
-        
-        # 偶数维度使用sin，奇数维度使用cos
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        
-        # 注册为buffer（不参与训练）
-        self.register_buffer('pe', pe.unsqueeze(0))
-    
-    def forward(self, x):
+
+    def __init__(self, d_model, max_len=500):
         """
-        前向传播
+        初始化位置编码层
         
         参数:
-            x: [batch_size, seq_len, d_model] 输入嵌入
+            d_model: 模型维度（嵌入维度）
+            max_len: 最大序列长度（预计算的位置编码矩阵大小）
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.max_len = max_len
+
+        # ==================== 预计算位置编码矩阵 ====================
+        # 意图：避免每次前向传播时重复计算，提高效率
+        
+        # 位置索引: [0, 1, 2, ..., max_len-1]
+        # pos.shape: (max_len, 1)
+        pos = torch.arange(0, self.max_len, dtype=torch.float).unsqueeze(1)
+        
+        # 维度索引（偶数）: [0, 2, 4, ..., d_model-2]
+        # _2i.shape: (d_model/2,)
+        _2i = torch.arange(0, self.d_model, step=2, dtype=torch.float)
+        
+        # 计算分母项: 10000^(2i/d_model)
+        # div_term.shape: (d_model/2,)
+        # 意图：不同维度使用不同的频率，低维度变化快，高维度变化慢
+        div_term = torch.pow(10000, _2i / self.d_model)
+
+        # 计算sin和cos值
+        # sins.shape: (max_len, d_model/2) - 偶数维度
+        # coss.shape: (max_len, d_model/2) - 奇数维度
+        sins = torch.sin(pos / div_term)
+        coss = torch.cos(pos / div_term)
+
+        # 组合成完整的位置编码矩阵
+        # pe.shape: (max_len, d_model)
+        pe = torch.zeros(self.max_len, self.d_model, dtype=torch.float)
+        pe[:, 0::2] = sins  # 偶数维度填充sin值
+        pe[:, 1::2] = coss  # 奇数维度填充cos值
+
+        # 注册为buffer（不参与梯度计算，但会随模型移动到GPU）
+        # 意图：位置编码是固定的，不需要学习
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        前向传播：将位置编码加到输入上
+        
+        参数:
+            x: [batch_size, seq_len, d_model] 输入词嵌入
         
         返回:
-            x: [batch_size, seq_len, d_model] 加入位置编码后的嵌入
+            [batch_size, seq_len, d_model] 加入位置编码后的嵌入
         """
         seq_len = x.size(1)
-        # 将预计算的位置编码加到输入上
-        x = x + self.pe[:, :seq_len, :]
-        return x
+        # 只取当前序列长度对应的位置编码
+        # x.shape: [batch, seq_len, d_model]
+        # pe[:seq_len].shape: [seq_len, d_model]
+        # 广播加法：每个batch使用相同的位置编码
+        return x + self.pe[:seq_len]
 
 
-class ScaledDotProductAttention(nn.Module):
+class TranslationModel(nn.Module):
     """
-    【与V2.0核心差异】缩放点积注意力 - V2.0中使用的是Additive Attention
+    翻译模型
     
-    意图：计算Query和Key之间的相关性，并加权Value
-    原理：Attention(Q,K,V) = softmax(QK^T/√d_k)V
+    功能:
+        完整的中英翻译模型，基于Transformer架构。
+        编码器处理中文输入，解码器生成英文输出。
     
-    【与V2.0差异】
-    - V2.0: score = v^T tanh(W_q*query + W_k*key)  (Additive)
-    - V3.0: score = QK^T / √d_k  (Scaled Dot-Product)
+    架构:
+        1. 源语言嵌入层（中文）
+        2. 目标语言嵌入层（英文）
+        3. 位置编码层
+        4. Transformer编码器-解码器
+        5. 输出线性层
+    
+    数据流:
+        中文输入 -> 嵌入 -> 位置编码 -> 编码器 -> memory
+                                              ↓
+        英文输入 -> 嵌入 -> 位置编码 -> 解码器 -> 线性层 -> 输出概率
     """
     
-    def forward(self, Q, K, V, mask=None):
+    def __init__(self, zh_vocab_size, en_vocab_size, zh_padding_index, en_padding_index):
         """
-        前向传播
+        初始化翻译模型
         
         参数:
-            Q: [batch, n_heads, seq_len, d_k] Query
-            K: [batch, n_heads, seq_len, d_k] Key
-            V: [batch, n_heads, seq_len, d_v] Value
-            mask: [batch, 1, seq_len, seq_len] 可选的掩码
-        
-        返回:
-            context: [batch, n_heads, seq_len, d_v] 注意力输出
-            attn: [batch, n_heads, seq_len, seq_len] 注意力权重
+            zh_vocab_size: 中文词表大小
+            en_vocab_size: 英文词表大小
+            zh_padding_index: 中文<pad>标记的索引
+            en_padding_index: 英文<pad>标记的索引
         """
-        d_k = Q.size(-1)
-        
-        # 【核心操作1】计算注意力分数: Q × K^T
-        # scores: [batch, n_heads, seq_len, seq_len]
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
-        
-        # 【核心操作2】应用掩码（如果提供）
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
-        
-        # 【核心操作3】Softmax归一化
-        attn = torch.softmax(scores, dim=-1)
-        
-        # 【核心操作4】加权求和: attn × V
-        context = torch.matmul(attn, V)
-        
-        return context, attn
-
-
-class MultiHeadAttention(nn.Module):
-    """
-    【与V2.0核心差异】多头注意力 - V2.0中只有单头Attention
-    
-    意图：使用多组独立的注意力参数，从不同角度捕捉信息
-    原理：将d_model维度分割为h个头，每个头独立计算注意力
-    
-    输入输出:
-        - Q, K, V: [batch, seq_len, d_model]
-        - output: [batch, seq_len, d_model]
-    """
-    
-    def __init__(self):
         super().__init__()
-        self.d_model = config.D_MODEL
-        self.n_heads = config.NUM_HEADS
-        self.d_k = self.d_model // self.n_heads  # 64 = 512 / 8
         
-        # 【与V2.0差异】线性投影层
-        self.W_Q = nn.Linear(self.d_model, self.d_model)
-        self.W_K = nn.Linear(self.d_model, self.d_model)
-        self.W_V = nn.Linear(self.d_model, self.d_model)
-        self.W_O = nn.Linear(self.d_model, self.d_model)
+        # ==================== 嵌入层 ====================
+        # 意图：将离散的词索引转换为连续的向量表示
         
-        self.attention = ScaledDotProductAttention()
-        self.dropout = nn.Dropout(config.DROPOUT)
-    
-    def forward(self, Q, K, V, mask=None):
-        """
-        前向传播
+        # 中文嵌入层
+        # padding_idx: 指定填充标记的索引，该位置的嵌入始终为0
+        # 意图：避免<pad>标记参与计算，节省计算资源
+        self.zh_embedding = nn.Embedding(num_embeddings=zh_vocab_size,
+                                         embedding_dim=config.DIM_MODEL,
+                                         padding_idx=zh_padding_index)
         
-        参数:
-            Q, K, V: [batch_size, seq_len, d_model]
-            mask: 可选的掩码
+        # 英文嵌入层
+        self.en_embedding = nn.Embedding(num_embeddings=en_vocab_size,
+                                         embedding_dim=config.DIM_MODEL,
+                                         padding_idx=en_padding_index)
         
-        返回:
-            output: [batch_size, seq_len, d_model]
-            attn: [batch_size, n_heads, seq_len, seq_len]
-        """
-        batch_size = Q.size(0)
-        
-        # 【核心操作1】线性投影并分割为多头
-        # Q: [batch, seq, d_model] -> [batch, seq, n_heads, d_k] -> [batch, n_heads, seq, d_k]
-        Q = self.W_Q(Q).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        K = self.W_K(K).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        V = self.W_V(V).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        
-        # 【核心操作2】计算多头注意力
-        context, attn = self.attention(Q, K, V, mask)
-        
-        # 【核心操作3】拼接多头并线性变换
-        # context: [batch, n_heads, seq, d_k] -> [batch, seq, d_model]
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
-        output = self.W_O(context)
-        output = self.dropout(output)
-        
-        return output, attn
+        # ==================== 位置编码层 ====================
+        # 意图：为输入注入位置信息
+        # 注意：编码器和解码器共享同一个位置编码层（参数相同）
+        self.position_encoding = PositionEncoding(config.DIM_MODEL, config.DIM_MODEL)
 
-
-class PositionwiseFeedForward(nn.Module):
-    """
-    【与V2.0核心差异】位置前馈网络 - V2.0中使用的是简单的LSTM
+        # ==================== Transformer核心 ====================
+        # 使用PyTorch内置的nn.Transformer
+        # d_model: 模型维度
+        # nhead: 注意力头数
+        # num_encoder_layers: 编码器层数
+        # num_decoder_layers: 解码器层数
+        # batch_first: 输入形状为[batch, seq, feature]而非[seq, batch, feature]
+        self.transformer = nn.Transformer(d_model=config.DIM_MODEL,
+                                       nhead=config.NUM_HEADS,
+                                       num_encoder_layers=config.NUM_ENCODER_LAYERS,
+                                       num_decoder_layers=config.NUM_DECODER_LAYERS,
+                                       batch_first=True)
+        
+        # ==================== 输出层 ====================
+        # 意图：将解码器输出映射到词表大小的概率分布
+        # 输入: [batch, seq_len, d_model]
+        # 输出: [batch, seq_len, en_vocab_size]
+        self.linear = nn.Linear(in_features=config.DIM_MODEL, out_features=en_vocab_size)
     
-    意图：对每个位置独立应用相同的前馈网络，引入非线性变换
-    原理：FFN(x) = max(0, xW1 + b1)W2 + b2
-    """
-    
-    def __init__(self):
-        super().__init__()
-        self.linear1 = nn.Linear(config.D_MODEL, config.D_FF)
-        self.linear2 = nn.Linear(config.D_FF, config.D_MODEL)
-        self.dropout = nn.Dropout(config.DROPOUT)
-        self.relu = nn.ReLU()
-    
-    def forward(self, x):
-        """
-        参数:
-            x: [batch_size, seq_len, d_model]
-        返回:
-            output: [batch_size, seq_len, d_model]
-        """
-        x = self.linear1(x)  # [batch, seq, d_ff]
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.linear2(x)  # [batch, seq, d_model]
-        return x
-
-
-class EncoderLayer(nn.Module):
-    """
-    【与V2.0核心差异】Transformer编码器层 - V2.0中是LSTM编码器
-    
-    意图：编码器的基本组成单元，包含Self-Attention和FFN
-    结构：Multi-Head Attention -> Add&Norm -> FFN -> Add&Norm
-    
-    【与V2.0差异】
-    - V2.0: LSTM层
-    - V3.0: MultiHeadAttention + FeedForward + LayerNorm + 残差连接
-    """
-    
-    def __init__(self):
-        super().__init__()
-        self.self_attn = MultiHeadAttention()
-        self.feed_forward = PositionwiseFeedForward()
-        self.norm1 = nn.LayerNorm(config.D_MODEL)
-        self.norm2 = nn.LayerNorm(config.D_MODEL)
-        self.dropout = nn.Dropout(config.DROPOUT)
-    
-    def forward(self, x, mask=None):
-        """
-        参数:
-            x: [batch_size, seq_len, d_model]
-            mask: 源语言填充掩码
-        返回:
-            output: [batch_size, seq_len, d_model]
-        """
-        # 【核心操作1】Self-Attention子层（带残差和层归一化）
-        attn_output, _ = self.self_attn(x, x, x, mask)
-        x = self.norm1(x + self.dropout(attn_output))  # 残差连接 + LayerNorm
-        
-        # 【核心操作2】Feed Forward子层（带残差和层归一化）
-        ff_output = self.feed_forward(x)
-        x = self.norm2(x + self.dropout(ff_output))  # 残差连接 + LayerNorm
-        
-        return x
-
-
-class DecoderLayer(nn.Module):
-    """
-    【与V2.0核心差异】Transformer解码器层 - V2.0中是LSTM解码器
-    
-    意图：解码器的基本组成单元，包含Masked Self-Attention、Cross-Attention和FFN
-    结构：
-        Masked Self-Attention -> Add&Norm
-        -> Cross-Attention -> Add&Norm
-        -> FFN -> Add&Norm
-    """
-    
-    def __init__(self):
-        super().__init__()
-        self.masked_self_attn = MultiHeadAttention()
-        self.cross_attn = MultiHeadAttention()
-        self.feed_forward = PositionwiseFeedForward()
-        self.norm1 = nn.LayerNorm(config.D_MODEL)
-        self.norm2 = nn.LayerNorm(config.D_MODEL)
-        self.norm3 = nn.LayerNorm(config.D_MODEL)
-        self.dropout = nn.Dropout(config.DROPOUT)
-    
-    def forward(self, x, enc_output, src_mask=None, tgt_mask=None):
-        """
-        参数:
-            x: [batch_size, tgt_seq_len, d_model] 解码器输入
-            enc_output: [batch_size, src_seq_len, d_model] 编码器输出
-            src_mask: 源语言掩码
-            tgt_mask: 目标语言掩码（防止看到未来信息）
-        返回:
-            output: [batch_size, tgt_seq_len, d_model]
-            self_attn: Self-Attention权重
-            cross_attn: Cross-Attention权重
-        """
-        # 【核心操作1】Masked Self-Attention
-        self_attn_output, self_attn = self.masked_self_attn(x, x, x, tgt_mask)
-        x = self.norm1(x + self.dropout(self_attn_output))
-        
-        # 【核心操作2】Cross-Attention（关注编码器输出）
-        cross_attn_output, cross_attn = self.cross_attn(x, enc_output, enc_output, src_mask)
-        x = self.norm2(x + self.dropout(cross_attn_output))
-        
-        # 【核心操作3】Feed Forward
-        ff_output = self.feed_forward(x)
-        x = self.norm3(x + self.dropout(ff_output))
-        
-        return x, self_attn, cross_attn
-
-
-class Transformer(nn.Module):
-    """
-    【与V2.0核心差异】完整Transformer模型 - V2.0中是AttentionSeq2Seq
-    
-    意图：完整的编码器-解码器Transformer架构
-    结构：
-        - 输入嵌入 + 位置编码
-        - N层编码器
-        - N层解码器
-        - 输出线性层
-    """
-    
-    def __init__(self, src_vocab_size, tgt_vocab_size, src_pad_idx, tgt_pad_idx):
-        super().__init__()
-        self.src_pad_idx = src_pad_idx
-        self.tgt_pad_idx = tgt_pad_idx
-        
-        # 【核心组件1】嵌入层
-        self.src_embedding = nn.Embedding(src_vocab_size, config.D_MODEL, padding_idx=src_pad_idx)
-        self.tgt_embedding = nn.Embedding(tgt_vocab_size, config.D_MODEL, padding_idx=tgt_pad_idx)
-        
-        # 【核心组件2】位置编码
-        self.pos_encoding = PositionalEncoding(config.D_MODEL)
-        
-        # 【核心组件3】Dropout
-        self.dropout = nn.Dropout(config.DROPOUT)
-        
-        # 【核心组件4】编码器栈
-        self.encoder_layers = nn.ModuleList([
-            EncoderLayer() for _ in range(config.NUM_LAYERS)
-        ])
-        
-        # 【核心组件5】解码器栈
-        self.decoder_layers = nn.ModuleList([
-            DecoderLayer() for _ in range(config.NUM_LAYERS)
-        ])
-        
-        # 【核心组件6】输出层
-        self.output_layer = nn.Linear(config.D_MODEL, tgt_vocab_size)
-        
-        # 参数初始化
-        self._init_parameters()
-    
-    def _init_parameters(self):
-        """Xavier初始化"""
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-    
-    def make_src_mask(self, src):
-        """创建源语言填充掩码"""
-        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
-        return src_mask  # [batch, 1, 1, src_len]
-    
-    def make_tgt_mask(self, tgt):
-        """创建目标语言掩码（填充掩码 + 因果掩码）"""
-        tgt_pad_mask = (tgt != self.tgt_pad_idx).unsqueeze(1).unsqueeze(3)
-        tgt_len = tgt.size(1)
-        
-        # 因果掩码（下三角矩阵）
-        causal_mask = torch.tril(torch.ones(tgt_len, tgt_len)).bool().to(tgt.device)
-        
-        tgt_mask = tgt_pad_mask & causal_mask
-        return tgt_mask  # [batch, 1, tgt_len, tgt_len]
-    
-    def encode(self, src):
-        """
-        编码阶段
-        
-        参数:
-            src: [batch_size, src_seq_len]
-        返回:
-            enc_output: [batch_size, src_seq_len, d_model]
-        """
-        # 创建掩码
-        src_mask = self.make_src_mask(src)
-        
-        # 嵌入 + 位置编码
-        x = self.src_embedding(src)  # [batch, src_seq, d_model]
-        x = self.pos_encoding(x)
-        x = self.dropout(x)
-        
-        # 通过编码器层
-        for layer in self.encoder_layers:
-            x = layer(x, src_mask)
-        
-        return x, src_mask
-    
-    def decode(self, tgt, enc_output, src_mask):
-        """
-        解码阶段
-        
-        参数:
-            tgt: [batch_size, tgt_seq_len]
-            enc_output: [batch_size, src_seq_len, d_model]
-            src_mask: [batch, 1, 1, src_len]
-        返回:
-            output: [batch_size, tgt_seq_len, tgt_vocab_size]
-        """
-        # 创建目标掩码
-        tgt_mask = self.make_tgt_mask(tgt)
-        
-        # 嵌入 + 位置编码
-        x = self.tgt_embedding(tgt)
-        x = self.pos_encoding(x)
-        x = self.dropout(x)
-        
-        # 通过解码器层
-        for layer in self.decoder_layers:
-            x, _, _ = layer(x, enc_output, src_mask, tgt_mask)
-        
-        # 输出层
-        output = self.output_layer(x)
-        return output
-    
-    def forward(self, src, tgt):
+    def forward(self, src, tgt, src_pad_mask, tgt_pad_mask):
         """
         完整前向传播
         
         参数:
-            src: [batch_size, src_seq_len] 源语言输入
-            tgt: [batch_size, tgt_seq_len] 目标语言输入
+            src: [batch_size, src_len] 源语言输入（中文词索引）
+            tgt: [batch_size, tgt_len] 目标语言输入（英文词索引）
+            src_pad_mask: [batch_size, src_len] 源语言填充掩码
+            tgt_pad_mask: [batch_size, tgt_len] 目标语言填充掩码（因果掩码）
+        
         返回:
-            output: [batch_size, tgt_seq_len, tgt_vocab_size]
+            [batch_size, tgt_len, en_vocab_size] 输出概率分布
         """
-        enc_output, src_mask = self.encode(src)
-        output = self.decode(tgt, enc_output, src_mask)
+        # 编码阶段：将源语言编码为上下文向量
+        memory = self.encode(src, src_pad_mask)
+        
+        # 解码阶段：根据上下文向量生成目标语言
+        return self.decode(tgt, memory, tgt_pad_mask, src_pad_mask)
+
+
+    def encode(self, src, src_pad_mask):
+        """
+        编码阶段
+        
+        功能:
+            将源语言序列编码为上下文表示（memory）
+        
+        参数:
+            src: [batch_size, src_len] 源语言输入
+            src_pad_mask: [batch_size, src_len] 源语言填充掩码
+                          True表示该位置是<pad>，应被忽略
+        
+        返回:
+            memory: [batch_size, src_len, d_model] 编码器输出
+        """
+        # src.shape = [batch_size, src_len]
+        # src_pad_mask.shape = [batch_size, src_len]
+        
+        # 词嵌入
+        embed = self.zh_embedding(src)
+        # embed.shape = [batch_size, src_len, dim_model]
+        
+        # 位置编码
+        embed = self.position_encoding(embed)
+
+        # 编码器前向传播
+        # src_key_padding_mask: 填充掩码，True位置不参与注意力计算
+        memory = self.transformer.encoder(src=embed, src_key_padding_mask=src_pad_mask)
+        # memory.shape: [batch_size, src_len, d_model]
+
+        return memory
+
+
+    def decode(self, tgt, memory, tgt_mask, memory_pad_mask):
+        """
+        解码阶段
+        
+        功能:
+            根据编码器输出和已生成的目标语言序列，预测下一个词
+        
+        参数:
+            tgt: [batch_size, tgt_len] 目标语言输入
+            memory: [batch_size, src_len, d_model] 编码器输出
+            tgt_mask: [tgt_len, tgt_len] 因果掩码（下三角矩阵）
+                      防止解码器看到未来信息
+            memory_pad_mask: [batch_size, src_len] 编码器输出的填充掩码
+        
+        返回:
+            [batch_size, tgt_len, en_vocab_size] 输出概率分布
+        """
+        # tgt.shape: [batch_size, tgt_len]
+        
+        # 词嵌入
+        embed = self.en_embedding(tgt)
+        
+        # 位置编码
+        embed = self.position_encoding(embed)
+        # embed.shape: [batch_size, tgt_len, dim_model]
+        
+        # 解码器前向传播
+        # tgt_mask: 因果掩码，确保位置i只能看到位置<=i的信息
+        # memory_key_padding_mask: 编码器输出的填充掩码
+        decoder_output = self.transformer.decoder(
+            tgt=embed, 
+            memory=memory, 
+            tgt_mask=tgt_mask, 
+            memory_key_padding_mask=memory_pad_mask
+        )
+        
+        # 线性变换到词表大小
+        output = self.linear(decoder_output)
         return output
 ```
 
@@ -2759,6 +2779,19 @@ class Transformer(nn.Module):
 ```python
 """
 模型训练模块
+
+功能描述:
+    实现Transformer翻译模型的完整训练流程。
+    包括数据加载、模型初始化、训练循环、模型保存等功能。
+
+核心组件:
+    - train_one_epoch: 单轮训练函数
+    - train: 完整训练流程
+
+训练策略:
+    - Teacher Forcing: 使用真实标签作为解码器输入
+    - 交叉熵损失: 忽略<pad>标记的损失
+    - Adam优化器: 自适应学习率
 
 作者: Red_Moon
 创建日期: 2026-02
@@ -2770,150 +2803,161 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from dataset import get_dataloader
-from model import Transformer
+from model import TranslationModel
 import config
 from tokenizer import ChineseTokenizer, EnglishTokenizer
-
-
-class NoamOpt:
-    """
-    【与V2.0核心差异】Noam学习率调度 - V2.0中使用的是Adam固定学习率
-    
-    意图：Transformer特有的学习率调度策略，先预热后衰减
-    公式：lrate = d_model^(-0.5) * min(step^(-0.5), step * warmup^(-1.5))
-    
-    【与V2.0差异】
-    - V2.0: optimizer = Adam(lr=1e-3)
-    - V3.0: 使用Noam调度，学习率随训练步数动态调整
-    """
-    
-    def __init__(self, model_size, warmup, optimizer):
-        self.optimizer = optimizer
-        self.warmup = warmup
-        self.model_size = model_size
-        self._step = 0
-    
-    def step(self):
-        """更新参数和学习率"""
-        self._step += 1
-        lr = self._get_lr()
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
-        self.optimizer.step()
-    
-    def _get_lr(self):
-        """计算当前学习率"""
-        step = self._step
-        warmup = self.warmup
-        
-        # lrate = d_model^(-0.5) * min(step^(-0.5), step * warmup^(-1.5))
-        return (self.model_size ** (-0.5)) * \
-               min(step ** (-0.5), step * warmup ** (-1.5))
-    
-    def zero_grad(self):
-        self.optimizer.zero_grad()
 
 
 def train_one_epoch(model, dataloader, loss_fn, optimizer, device):
     """
     训练一个轮次
     
-    【与V2.0核心差异】
-    - V2.0: 使用循环逐个时间步解码
-    - V3.0: Transformer可以并行处理整个序列
+    功能:
+        遍历整个训练数据集，执行前向传播、反向传播和参数更新。
     
     参数:
         model: 待训练模型
         dataloader: 训练数据加载器
-        loss_fn: 损失函数
-        optimizer: 优化器（NoamOpt包装）
-        device: 计算设备
+        loss_fn: 损失函数（交叉熵）
+        optimizer: 优化器（Adam）
+        device: 计算设备（CPU/GPU）
     
     返回:
         float: 平均损失
+    
+    训练流程:
+        1. 准备编码器输入和解码器输入/目标
+        2. 创建掩码（填充掩码和因果掩码）
+        3. 前向传播
+        4. 计算损失
+        5. 反向传播
+        6. 参数更新
     """
     model.train()
     total_loss = 0
     
-    for src, tgt in tqdm(dataloader, desc='训练'):
-        # 数据移动到设备
-        src = src.to(device)  # [batch, src_seq_len]
-        tgt = tgt.to(device)  # [batch, tgt_seq_len]
+    for inputs, targets in tqdm(dataloader, desc='训练'):
+        # ==================== 数据准备 ====================
+        # 数据移动到设备（意图：确保张量在正确的设备上）
+        encoder_inputs = inputs.to(device)  # [batch, src_seq_len]
+        targets = targets.to(device)  # [batch, tgt_seq_len]
         
-        # 【与V2.0差异】Teacher Forcing：使用真实标签作为解码器输入
-        tgt_input = tgt[:, :-1]  # [batch, tgt_seq_len-1] 去掉<eos>
-        tgt_output = tgt[:, 1:]  # [batch, tgt_seq_len-1] 去掉<sos>
+        # ==================== Teacher Forcing策略 ====================
+        # 意图：训练时使用真实标签作为解码器输入，加速收敛
+        # decoder_inputs: 去掉<eos>，作为解码器输入
+        # decoder_targets: 去掉<sos>，作为预测目标
+        decoder_inputs = targets[:, :-1]  # [batch, tgt_seq_len-1]
+        decoder_targets = targets[:, 1:]  # [batch, tgt_seq_len-1]
         
-        # 【与V2.0核心差异】Transformer可以一次性处理整个序列
-        # V2.0需要循环逐个时间步解码，V3.0直接并行计算
-        output = model(src, tgt_input)  # [batch, tgt_seq_len-1, vocab_size]
+        # ==================== 创建掩码 ====================
+        # 源语言填充掩码（意图：屏蔽<pad>位置，不参与注意力计算）
+        # True表示该位置是<pad>，应被忽略
+        src_pad_mask = encoder_inputs == model.zh_embedding.padding_idx
         
-        # 计算损失
-        output = output.reshape(-1, output.shape[-1])  # [batch*(seq-1), vocab_size]
-        tgt_output = tgt_output.reshape(-1)  # [batch*(seq-1)]
-        
-        loss = loss_fn(output, tgt_output)
+        # 目标语言因果掩码（意图：防止解码器看到未来信息）
+        # generate_square_subsequent_mask生成下三角矩阵
+        # 形状: [tgt_seq_len-1, tgt_seq_len-1]
+        tgt_mask = model.transformer.generate_square_subsequent_mask(decoder_inputs.shape[1]).to(device)
+
+        # ==================== 前向传播 ====================
+        # 输出形状: [batch, tgt_seq_len-1, en_vocab_size]
+        decoder_outputs = model(encoder_inputs, decoder_inputs, src_pad_mask, tgt_mask)
+
+        # ==================== 计算损失 ====================
+        # reshape: 将批次和序列维度展平
+        # decoder_outputs: [batch*(seq-1), en_vocab_size]
+        # decoder_targets: [batch*(seq-1)]
+        loss = loss_fn(decoder_outputs.reshape(-1, decoder_outputs.shape[-1]), decoder_targets.reshape(-1))
         total_loss += loss.item()
         
-        # 反向传播
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        # ==================== 反向传播 ====================
+        optimizer.zero_grad()  # 清零梯度
+        loss.backward()        # 计算梯度
+        optimizer.step()       # 更新参数
     
     return total_loss / len(dataloader)
 
 
 def train():
-    """执行完整训练流程"""
+    """
+    执行完整训练流程
+    
+    功能:
+        初始化模型、数据、优化器，执行多轮训练，保存最佳模型。
+    
+    流程:
+        1. 设置设备
+        2. 加载数据
+        3. 加载词表
+        4. 初始化模型
+        5. 配置损失函数和优化器
+        6. 训练循环
+        7. 保存最佳模型
+    
+    输出:
+        - TensorBoard日志
+        - 最佳模型权重文件
+    """
+    # ==================== 设备设置 ====================
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"使用设备: {device}")
     
+    # ==================== 数据加载 ====================
     dataloader = get_dataloader()
     print(f"训练集批次数量: {len(dataloader)}")
     
-    # 加载词表
+    # ==================== 词表加载 ====================
+    # 意图：动态获取词表大小，避免硬编码
     zh_tokenizer = ChineseTokenizer.from_vocab(config.MODELS_DIR / 'zh_vocab.txt')
     en_tokenizer = EnglishTokenizer.from_vocab(config.MODELS_DIR / 'en_vocab.txt')
     print(f"中文词表大小: {zh_tokenizer.vocab_size}")
     print(f"英文词表大小: {en_tokenizer.vocab_size}")
     
-    # 【与V2.0核心差异】初始化Transformer模型
-    model = Transformer(
-        src_vocab_size=zh_tokenizer.vocab_size,
-        tgt_vocab_size=en_tokenizer.vocab_size,
-        src_pad_idx=zh_tokenizer.pad_token_index,
-        tgt_pad_idx=en_tokenizer.pad_token_index
+    # ==================== 模型初始化 ====================
+    model = TranslationModel(
+        zh_vocab_size=zh_tokenizer.vocab_size,
+        en_vocab_size=en_tokenizer.vocab_size,
+        zh_padding_index=zh_tokenizer.pad_token_index,
+        en_padding_index=en_tokenizer.pad_token_index
     ).to(device)
-    print(f"模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+    print("模型初始化完成")
     
-    # 【与V2.0核心差异】使用Noam学习率调度
-    base_optimizer = torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9)
-    optimizer = NoamOpt(config.D_MODEL, config.WARMUP_STEPS, base_optimizer)
-    
-    # 损失函数
+    # ==================== 损失函数和优化器 ====================
+    # 损失函数（警示：ignore_index确保<pad>标记不参与损失计算）
+    # 意图：<pad>是填充标记，不应该影响模型学习
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=en_tokenizer.pad_token_index)
     
-    # TensorBoard日志
+    # 优化器
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+    
+    # ==================== TensorBoard日志 ====================
+    # 意图：可视化训练过程，便于调参
     log_dir = config.LOGS_DIR / time.strftime("%Y-%m-%d_%H-%M-%S")
     writer = SummaryWriter(log_dir=log_dir)
     print(f"TensorBoard日志目录: {log_dir}")
     
+    # ==================== 训练循环 ====================
     best_loss = float('inf')
     
     for epoch in range(1, 1 + config.EPOCHS):
         print("\n" + "=" * 10 + f" Epoch: {epoch}/{config.EPOCHS} " + "=" * 10)
         
+        # 训练一个轮次
         loss = train_one_epoch(model, dataloader, loss_fn, optimizer, device)
         print(f"平均损失: {loss:.6f}")
         
+        # 记录到TensorBoard
         writer.add_scalar('Loss/train', loss, epoch)
         
-        # 保存最佳模型
+        # ==================== 保存最佳模型 ====================
+        # 意图：基于训练损失保存最优检查点
+        # 警示：更严谨的做法是使用验证集损失
         if loss < best_loss:
             best_loss = loss
-            torch.save(model.state_dict(), config.MODELS_DIR / 'best_transformer.pt')
+            torch.save(model.state_dict(), config.MODELS_DIR / 'best.pth')
             print(f"模型保存成功（最佳损失: {best_loss:.6f}）")
     
+    # ==================== 训练结束 ====================
     writer.close()
     print("\n" + "=" * 40)
     print("训练完成！")
@@ -2931,69 +2975,142 @@ if __name__ == '__main__':
 """
 模型预测模块
 
+功能描述:
+    实现Transformer翻译模型的推理功能。
+    包括自回归生成、批量预测、交互式翻译界面。
+
+核心组件:
+    - predict_batch: 批量预测函数（自回归生成）
+    - predict: 单条文本预测
+    - run_predict: 交互式预测界面
+
+解码策略:
+    - 贪心解码: 每步选择概率最高的词
+    - 自回归生成: 每一步将之前所有已生成的词作为输入，预测下一个词
+                  （区别于RNN：Transformer每次重新计算整个序列的注意力）
+
 作者: Red_Moon
 创建日期: 2026-02
 """
 
 import torch
 import config
-from model import Transformer
+from model import TranslationModel
 from tokenizer import ChineseTokenizer, EnglishTokenizer
 
 
-def greedy_decode(model, src, src_mask, max_len, sos_idx, eos_idx, device):
+def predict_batch(model, inputs, en_tokenizer, device):
     """
-    【与V2.0核心差异】贪心解码 - V2.0中也是贪心，但实现方式不同
+    批量预测（自回归生成）
     
-    意图：使用贪心策略自回归生成翻译结果
-    【与V2.0差异】
-    - V2.0: 逐个时间步调用decoder，每次传入hidden state
-    - V3.0: 每次将已生成的序列传入decoder，利用Transformer的并行能力
+    功能:
+        使用贪心解码策略，自回归地生成翻译结果。
+        每次生成一个词，直到生成<eos>或达到最大长度。
     
     参数:
         model: 已加载权重的模型
-        src: [1, src_seq_len] 源语言输入
-        src_mask: [1, 1, 1, src_seq_len] 源语言掩码
-        max_len: 最大生成长度
-        sos_idx: <sos>标记索引
-        eos_idx: <eos>标记索引
+        inputs: [batch_size, seq_len] 源语言输入（中文词索引）
+        en_tokenizer: 英文分词器
         device: 计算设备
     
     返回:
-        list: 生成的词索引列表
+        list: 预测的词索引列表（不含<sos>和<eos>）
+    
+    自回归生成流程:
+        1. 编码源语言序列得到memory
+        2. 初始化解码器输入为<sos>
+        3. 循环生成：
+           a. 解码得到输出概率
+           b. 选择概率最高的词
+           c. 添加到已生成序列
+           d. 检查是否生成<eos>
+        4. 截断<eos>之后的标记
     """
     model.eval()
     
     with torch.no_grad():
-        # 编码阶段
-        enc_output, src_mask = model.encode(src)
+        # ==================== 编码阶段 ====================
+        # 意图：将源语言编码为上下文向量（memory）
+        # 创建填充掩码
+        src_pad_mask = (inputs == model.zh_embedding.padding_idx)
         
-        # 初始化解码器输入为<sos>
-        tgt = torch.ones(1, 1).fill_(sos_idx).long().to(device)
+        # 编码
+        memory = model.encode(inputs, src_pad_mask)
+        # memory.shape: [batch, src_len, d_model]
+
+        batch_size = inputs.shape[0]
+        device = inputs.device
+
+        # ==================== 解码初始化 ====================
+        # 初始化解码器输入为<sos>标记（意图：自回归生成的起始信号）
+        # decoder_input.shape: [batch, 1]
+        decoder_input = torch.full([batch_size, 1], en_tokenizer.sos_token_index, device=device)
+
+        generated = []  # 存储生成的词索引
+        is_finished = torch.zeros(batch_size, dtype=torch.bool, device=device)  # 记录已完成序列
         
-        for i in range(max_len - 1):
-            # 【与V2.0核心差异】Transformer每次处理整个已生成序列
-            # V2.0只传入上一个词和hidden state
-            # V3.0传入整个已生成序列，利用Self-Attention的因果掩码
-            output = model.decode(tgt, enc_output, src_mask)
+        # ==================== 自回归生成循环 ====================
+        # 警示：最大长度限制防止无限生成
+        for i in range(config.SEQ_LEN):
+            # 创建因果掩码（意图：防止看到未来信息）
+            tgt_mask = model.transformer.generate_square_subsequent_mask(decoder_input.size(1)).to(device)
             
+            # 解码
+            decoder_output = model.decode(decoder_input, memory, tgt_mask, src_pad_mask)
+            # decoder_output.shape: [batch, tgt_seq_len, en_vocab_size]
+            
+            # ==================== 贪心解码 ====================
+            # 意图：简单高效的解码策略，选择概率最高的词
             # 取最后一个位置的预测
-            prob = output[:, -1]  # [1, vocab_size]
-            next_word = torch.argmax(prob, dim=-1)  # [1]
+            next_token_indexes = torch.argmax(decoder_output[:, -1, :], dim=-1, keepdim=True)
+            # next_token_indexes.shape: [batch, 1]
             
-            # 添加到生成序列
-            tgt = torch.cat([tgt, next_word.unsqueeze(0)], dim=1)
+            generated.append(next_token_indexes)
             
-            # 检查是否生成<eos>
-            if next_word.item() == eos_idx:
+            # ==================== 更新解码器输入 ====================
+            # 【自回归生成核心机制】
+            # 将新生成的词拼接到已有序列末尾，形成新的完整输入序列
+            # 
+            # 自回归特性详解：
+            # - 第1步：decoder_input = [<sos>]                    -> 预测 w1
+            # - 第2步：decoder_input = [<sos>, w1]               -> 预测 w2
+            # - 第3步：decoder_input = [<sos>, w1, w2]           -> 预测 w3
+            # - 第i步：decoder_input = [<sos>, w1, w2, ..., w_i-1] -> 预测 w_i
+            # 
+            # 【与RNN的关键差异】
+            # - RNN: decoder_input = next_token（仅传入上一个词）
+            #        历史信息通过 hidden state 隐式传递
+            # - Transformer: decoder_input = [sos, w1, w2, ..., w_i]（传入所有已生成的词）
+            #                历史信息通过 Self-Attention 显式计算
+            #                每步重新计算整个序列的注意力，而非增量计算
+            decoder_input = torch.cat([decoder_input, next_token_indexes], dim=-1)
+            
+            # ==================== 检查终止条件 ====================
+            # 意图：提前终止已完成序列，节省计算
+            is_finished |= (next_token_indexes.squeeze(1) == en_tokenizer.eos_token_index)
+            if is_finished.all():
                 break
         
-        return tgt.squeeze(0).tolist()
+        # ==================== 处理预测结果 ====================
+        # 拼接所有生成的词
+        generated_tensor = torch.cat(generated, dim=1)  # [batch, seq_len]
+        generated_list = generated_tensor.tolist()
+        
+        # 截断<eos>之后的标记（意图：清理输出，只保留有效部分）
+        for index, sentence in enumerate(generated_list):
+            if en_tokenizer.eos_token_index in sentence:
+                eos_pos = sentence.index(en_tokenizer.eos_token_index)
+                generated_list[index] = sentence[:eos_pos]
+        
+        return generated_list
 
 
 def predict(text, model, zh_tokenizer, en_tokenizer, device):
     """
     单条文本预测
+    
+    功能:
+        将中文文本翻译为英文文本。
     
     参数:
         text: 待翻译的中文文本
@@ -3004,64 +3121,80 @@ def predict(text, model, zh_tokenizer, en_tokenizer, device):
     
     返回:
         str: 翻译后的英文文本
+    
+    流程:
+        1. 中文文本编码为索引
+        2. 批量预测
+        3. 索引解码为英文文本
     """
-    # 编码输入
+    # 编码中文文本
     indexes = zh_tokenizer.encode(text)
-    src = torch.tensor([indexes], dtype=torch.long).to(device)
+    input_tensor = torch.tensor([indexes], dtype=torch.long).to(device)
     
-    # 创建源掩码
-    src_mask = model.make_src_mask(src)
+    # 批量预测
+    batch_result = predict_batch(model, input_tensor, en_tokenizer, device)
     
-    # 生成翻译
-    result = greedy_decode(
-        model, src, src_mask, config.SEQ_LEN,
-        en_tokenizer.sos_token_index,
-        en_tokenizer.eos_token_index,
-        device
-    )
-    
-    # 解码为文本
-    return en_tokenizer.decode(result)
+    # 解码为英文文本
+    return en_tokenizer.decode(batch_result[0])
 
 
 def run_predict():
-    """运行交互式预测界面"""
+    """
+    运行交互式预测界面
+    
+    功能:
+        提供命令行交互界面，用户输入中文，模型输出英文翻译。
+    
+    流程:
+        1. 加载词表
+        2. 加载模型权重
+        3. 循环读取用户输入
+        4. 输出翻译结果
+    
+    退出方式:
+        输入 'q' 或 'quit' 退出程序
+    """
+    # ==================== 设备设置 ====================
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"使用设备: {device}")
     
-    # 加载词表
+    # ==================== 加载词表 ====================
     zh_tokenizer = ChineseTokenizer.from_vocab(config.MODELS_DIR / 'zh_vocab.txt')
     en_tokenizer = EnglishTokenizer.from_vocab(config.MODELS_DIR / 'en_vocab.txt')
     print("词表加载成功")
     
-    # 【与V2.0核心差异】加载Transformer模型
-    model = Transformer(
-        src_vocab_size=zh_tokenizer.vocab_size,
-        tgt_vocab_size=en_tokenizer.vocab_size,
-        src_pad_idx=zh_tokenizer.pad_token_index,
-        tgt_pad_idx=en_tokenizer.pad_token_index
+    # ==================== 加载模型 ====================
+    model = TranslationModel(
+        zh_vocab_size=zh_tokenizer.vocab_size,
+        en_vocab_size=en_tokenizer.vocab_size,
+        zh_padding_index=zh_tokenizer.pad_token_index,
+        en_padding_index=en_tokenizer.pad_token_index
     ).to(device)
-    model.load_state_dict(torch.load(config.MODELS_DIR / 'best_transformer.pt'))
-    print("Transformer模型加载成功")
+    model.load_state_dict(torch.load(config.MODELS_DIR / 'best.pth'))
+    print("模型加载成功")
     
-    print("\n" + "=" * 50)
-    print("欢迎使用Transformer翻译模型(输入q或者quit退出)")
-    print("=" * 50)
+    # ==================== 交互界面 ====================
+    print("\n" + "=" * 40)
+    print("欢迎使用翻译模型(输入q或者quit退出)")
+    print("=" * 40)
     
     while True:
-        user_input = input("\n中文: ")
+        user_input = input("中文： ")
         
-        if user_input.lower() in ['q', 'quit']:
+        # 检查退出命令
+        if user_input in ['q', 'quit']:
             print("欢迎下次再来")
             break
         
-        if not user_input.strip():
+        # 检查空输入
+        if user_input.strip() == '':
             print("请输入内容")
             continue
         
+        # 执行翻译
         result = predict(user_input, model, zh_tokenizer, en_tokenizer, device)
-        print(f"英文: {result}")
-        print("-" * 50)
+        print(f"翻译结果: {result}")
+        print("-" * 40)
 
 
 if __name__ == '__main__':
